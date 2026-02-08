@@ -1,0 +1,12 @@
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Core\bin\Release\net8.0\PulseSend.Core.deps.json
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Core\bin\Release\net8.0\PulseSend.Core.dll
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Core\bin\Release\net8.0\PulseSend.Core.pdb
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Core\obj\Release\net8.0\PulseSend.Core.csproj.AssemblyReference.cache
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Core\obj\Release\net8.0\PulseSend.Core.GeneratedMSBuildEditorConfig.editorconfig
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Core\obj\Release\net8.0\PulseSend.Core.AssemblyInfoInputs.cache
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Core\obj\Release\net8.0\PulseSend.Core.AssemblyInfo.cs
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Core\obj\Release\net8.0\PulseSend.Core.csproj.CoreCompileInputs.cache
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Core\obj\Release\net8.0\PulseSend.Core.dll
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Core\obj\Release\net8.0\refint\PulseSend.Core.dll
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Core\obj\Release\net8.0\PulseSend.Core.pdb
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Core\obj\Release\net8.0\ref\PulseSend.Core.dll

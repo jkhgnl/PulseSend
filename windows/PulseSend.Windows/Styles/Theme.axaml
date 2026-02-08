@@ -1,0 +1,176 @@
+﻿<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Styles.Resources>
+    <Color x:Key="AppBackgroundColor">#F2F5FA</Color>
+    <Color x:Key="CardColor">#CCFFFFFF</Color>
+    <Color x:Key="CardEdge">#44FFFFFF</Color>
+    <Color x:Key="AccentColor">#3A77FF</Color>
+    <Color x:Key="AccentSoftColor">#223A77FF</Color>
+    <Color x:Key="TextPrimary">#0F172A</Color>
+    <Color x:Key="TextMuted">#667085</Color>
+
+    <SolidColorBrush x:Key="AppBackground" Color="{StaticResource AppBackgroundColor}" />
+    <SolidColorBrush x:Key="CardBackground" Color="{StaticResource CardColor}" />
+    <SolidColorBrush x:Key="CardBorder" Color="{StaticResource CardEdge}" />
+    <SolidColorBrush x:Key="Accent" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="AccentSoft" Color="{StaticResource AccentSoftColor}" />
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimary}" />
+    <SolidColorBrush x:Key="TextMutedBrush" Color="{StaticResource TextMuted}" />
+  </Styles.Resources>
+
+  <Style Selector="Window">
+    <Setter Property="FontFamily" Value="Bahnschrift, Segoe UI" />
+    <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+  </Style>
+
+  <Style Selector="TextBlock">
+    <Setter Property="FontSize" Value="13" />
+  </Style>
+
+  <Style Selector="TextBlock.label">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="TextBlock.section">
+    <Setter Property="FontSize" Value="16" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="TextBlock.muted">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+  </Style>
+
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="{StaticResource CardBackground}" />
+    <Setter Property="BorderBrush" Value="{StaticResource CardBorder}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="16" />
+    <Setter Property="BoxShadow" Value="0 16 40 #14000000" />
+    <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+    <Setter Property="RenderTransform">
+      <ScaleTransform ScaleX="1" ScaleY="1" />
+    </Setter>
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Opacity" Duration="0:0:0.2" />
+        <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.2" />
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <Style Selector="Border.card.item:pointerover">
+    <Setter Property="RenderTransform">
+      <ScaleTransform ScaleX="1.02" ScaleY="1.02" />
+    </Setter>
+    <Setter Property="BoxShadow" Value="0 18 50 #22000000" />
+  </Style>
+
+  <Style Selector="Border.hero">
+    <Setter Property="Background">
+      <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#F8FBFF" Offset="0" />
+        <GradientStop Color="#EEF4FF" Offset="0.55" />
+        <GradientStop Color="#F7F9FF" Offset="1" />
+      </LinearGradientBrush>
+    </Setter>
+  </Style>
+
+  <Style Selector="Border.note">
+    <Setter Property="Background" Value="#F9FBFF" />
+    <Setter Property="BorderBrush" Value="{StaticResource CardBorder}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="12" />
+  </Style>
+
+  <Style Selector="Border.chip">
+    <Setter Property="Background" Value="#EEF2FF" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="6,2" />
+  </Style>
+
+  <Style Selector="Border.chip.accent">
+    <Setter Property="Background" Value="{StaticResource AccentSoft}" />
+  </Style>
+
+  <Style Selector="Border.chip.online">
+    <Setter Property="Background" Value="#1F9D6A" />
+  </Style>
+
+  <Style Selector="Border.chip.offline">
+    <Setter Property="Background" Value="#D64045" />
+  </Style>
+
+  <Style Selector="Border.chip TextBlock">
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+  </Style>
+
+  <Style Selector="Border.chip.accent TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource Accent}" />
+  </Style>
+
+  <Style Selector="Border.chip.online TextBlock">
+    <Setter Property="Foreground" Value="White" />
+  </Style>
+
+  <Style Selector="Border.chip.offline TextBlock">
+    <Setter Property="Foreground" Value="White" />
+  </Style>
+
+  <Style Selector="ListBox">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+  </Style>
+
+  <Style Selector="Button">
+    <Setter Property="Background" Value="#E9EEF7" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="14,8" />
+    <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+    <Setter Property="RenderTransform">
+      <ScaleTransform ScaleX="1" ScaleY="1" />
+    </Setter>
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Opacity" Duration="0:0:0.15" />
+        <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.15" />
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <Style Selector="Button:pointerover">
+    <Setter Property="RenderTransform">
+      <ScaleTransform ScaleX="1.03" ScaleY="1.03" />
+    </Setter>
+  </Style>
+
+  <Style Selector="Button.primary">
+    <Setter Property="Background" Value="{StaticResource Accent}" />
+    <Setter Property="Foreground" Value="White" />
+  </Style>
+
+  <Style Selector="TextBox">
+    <Setter Property="Background" Value="White" />
+    <Setter Property="BorderBrush" Value="{StaticResource CardBorder}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="10,6" />
+  </Style>
+
+  <Style Selector="ProgressBar">
+    <Setter Property="Foreground" Value="{StaticResource Accent}" />
+    <Setter Property="Background" Value="#E9EEF7" />
+    <Setter Property="CornerRadius" Value="6" />
+  </Style>
+
+  <Style Selector="Border.message">
+    <Setter Property="Background" Value="#F4F6FB" />
+    <Setter Property="CornerRadius" Value="12" />
+  </Style>
+</Styles>
+
+

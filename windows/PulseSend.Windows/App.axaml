@@ -1,0 +1,11 @@
+﻿<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="PulseSend.Windows.App"
+             RequestedThemeVariant="Light">
+  <Application.Styles>
+    <FluentTheme />
+    <StyleInclude Source="avares://PulseSend.Windows/Styles/Theme.axaml" />
+  </Application.Styles>
+</Application>
+
+

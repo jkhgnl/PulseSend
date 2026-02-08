@@ -1,0 +1,24 @@
+﻿<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="PulseSend.Windows.Views.PairDialog"
+        Width="360"
+        Height="220"
+        WindowStartupLocation="CenterOwner"
+        Title="输入配对码"
+        CanResize="False">
+  <Border Padding="20" Background="{DynamicResource CardBackground}">
+    <StackPanel Spacing="12">
+      <TextBlock Text="请输入对方设备显示的 6 位配对码"/>
+      <TextBox x:Name="CodeBox" Watermark="例如 123456" MaxLength="6"/>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+        <Button x:Name="CancelButton" Content="取消"/>
+        <Button x:Name="OkButton" Content="确定" Classes="primary"/>
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>
+
+
+
+
+

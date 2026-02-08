@@ -1,0 +1,168 @@
+﻿<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:PulseSend.Windows.ViewModels"
+        xmlns:documents="clr-namespace:Avalonia.Controls.Documents;assembly=Avalonia.Controls"
+        x:Class="PulseSend.Windows.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="脉冲传输"
+        Icon="avares://PulseSend.Windows/Assets/icon.ico"
+        Width="1280"
+        Height="760"
+        MinWidth="1100"
+        MinHeight="680"
+        WindowStartupLocation="CenterScreen"
+        Background="Transparent">
+  <Grid>
+    <Border Background="{DynamicResource AppBackground}">
+      <Grid>
+        <Canvas IsHitTestVisible="False">
+          <Ellipse Width="420" Height="420" Canvas.Left="-120" Canvas.Top="-140">
+            <Ellipse.Fill>
+              <RadialGradientBrush>
+                <GradientStop Color="#5566A3FF" Offset="0" />
+                <GradientStop Color="#00FFFFFF" Offset="1" />
+              </RadialGradientBrush>
+            </Ellipse.Fill>
+          </Ellipse>
+          <Ellipse Width="360" Height="360" Canvas.Right="-120" Canvas.Bottom="-140">
+            <Ellipse.Fill>
+              <RadialGradientBrush>
+                <GradientStop Color="#66A8E6FF" Offset="0" />
+                <GradientStop Color="#00FFFFFF" Offset="1" />
+              </RadialGradientBrush>
+            </Ellipse.Fill>
+          </Ellipse>
+        </Canvas>
+
+        <Grid RowDefinitions="Auto,*" Margin="24">
+          <Border Classes="card hero" Padding="20" Margin="0,0,0,20">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+              <StackPanel Spacing="6">
+                <TextBlock Text="配对码" Classes="label"/>
+                <TextBlock Text="{Binding PairCode}" FontSize="36" FontWeight="SemiBold"/>
+                <TextBlock Classes="muted">
+                  <documents:Run Text="指纹：" />
+                  <documents:Run Text="{Binding Fingerprint, FallbackValue=未生成}" />
+                </TextBlock>
+              </StackPanel>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="6" Margin="24,0,0,0">
+                  <TextBlock Text="状态" Classes="label"/>
+                  <TextBlock Text="{Binding StatusText}" FontSize="18"/>
+                  <TextBlock Classes="muted">
+                    <documents:Run Text="端口：" />
+                    <documents:Run Text="{Binding Port}" />
+                  </TextBlock>
+                </StackPanel>
+              <StackPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="10" Margin="24,0,0,0">
+                <Button Classes="primary" Command="{Binding RegenerateCodeCommand}" Content="刷新配对码"/>
+                <TextBlock Text="选择左侧设备后可发送" Classes="muted"/>
+              </StackPanel>
+            </Grid>
+          </Border>
+
+          <Grid Grid.Row="1" ColumnDefinitions="280,*,360">
+            <Border Classes="card" Padding="16" Margin="0,0,20,0">
+              <Grid RowDefinitions="Auto,*,Auto,Auto">
+                <TextBlock Text="附近设备" Classes="section" Margin="0,0,0,12"/>
+                <ListBox Grid.Row="1" Margin="0,0,0,12" ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:DeviceViewModel">
+                    <Border Classes="card item" Padding="12" Margin="0,0,0,10">
+                      <StackPanel Spacing="4">
+                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding DisplayAddress}" Classes="muted"/>
+                        <TextBlock Text="{Binding FingerprintLabel}" Classes="muted"/>
+                        <TextBlock Text="{Binding PortLabel}" Classes="muted"/>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                          <Border Classes="chip">
+                            <TextBlock Text="{Binding Platform}" />
+                          </Border>
+                          <Border Classes="chip" Background="{Binding OnlineBrush}">
+                            <TextBlock Text="{Binding OnlineLabel}" Foreground="White" />
+                          </Border>
+                          <Border Classes="chip accent">
+                            <TextBlock Text="{Binding PairLabel}" />
+                          </Border>
+                        </StackPanel>
+                        </StackPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+
+                <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+                  <Button Command="{Binding PairSelectedCommand}" Content="配对" IsEnabled="{Binding HasSelectedDevice}"/>
+                  <Button Command="{Binding SendFileCommand}" Content="发送文件" IsEnabled="{Binding HasSelectedDevice}"/>
+                  <Button Command="{Binding SendMessageCommand}" Content="发送文本" IsEnabled="{Binding HasSelectedDevice}"/>
+                </StackPanel>
+
+                <Border Grid.Row="3" Classes="note" Padding="10">
+                  <StackPanel Spacing="6">
+                    <TextBlock Text="手动添加设备" Classes="label"/>
+                    <TextBox Text="{Binding ManualAddress}" Watermark="IP 地址"/>
+                    <TextBox Text="{Binding ManualPortText}" Watermark="端口 (默认 48084)"/>
+                    <Button Command="{Binding AddManualDeviceCommand}" Content="添加"/>
+                  </StackPanel>
+                </Border>
+              </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Classes="card" Padding="16" Margin="0,0,20,0">
+              <Grid RowDefinitions="Auto,*">
+                <TextBlock Text="传输进度" Classes="section" Margin="0,0,0,12"/>
+                <ItemsControl ItemsSource="{Binding Transfers}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:TransferItemViewModel">
+                      <Border Classes="card item" Padding="12" Margin="0,0,0,12">
+                        <StackPanel Spacing="6">
+                          <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
+                          <TextBlock Text="{Binding StatusText}" Classes="muted"/>
+                          <ProgressBar Value="{Binding Progress}" Height="8"/>
+                          <TextBlock Text="{Binding SizeText}" Classes="muted"/>
+                        </StackPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Grid>
+            </Border>
+
+            <Border Grid.Column="2" Classes="card" Padding="16">
+              <Grid RowDefinitions="Auto,*,Auto">
+                <TextBlock Text="消息" Classes="section" Margin="0,0,0,12"/>
+                <ScrollViewer Grid.Row="1" Margin="0,0,0,12">
+                  <ItemsControl ItemsSource="{Binding Messages}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:MessageItemViewModel">
+                        <Border Classes="message" Padding="10" Margin="0,0,0,10">
+                          <StackPanel Spacing="4">
+                            <TextBlock Text="{Binding Header}" Classes="muted"/>
+                            <TextBlock Text="{Binding Content}" TextWrapping="Wrap"/>
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+                <StackPanel Grid.Row="2" Spacing="8">
+                  <TextBox Text="{Binding MessageDraft}" Watermark="输入要发送的文本" AcceptsReturn="True" Height="90"/>
+                  <Button Classes="primary" Command="{Binding SendMessageCommand}" Content="发送文本" IsEnabled="{Binding HasSelectedDevice}"/>
+                  <TextBlock Text="{Binding Notice}" Classes="muted"/>
+                </StackPanel>
+              </Grid>
+            </Border>
+          </Grid>
+        </Grid>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>
+
+
+
+
+
+
+
