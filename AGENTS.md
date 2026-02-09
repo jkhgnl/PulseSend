@@ -13,11 +13,11 @@ This is a single-module Android app built with Kotlin and Jetpack Compose.
 
 ## Build, Test, and Development Commands
 Use the Gradle wrapper from the repo root (PowerShell examples):
-- `.\gradlew :app:assembleDebug` builds a debug APK.
-- `.\gradlew :app:installDebug` installs the debug build on a device/emulator.
-- `.\gradlew :app:testDebugUnitTest` runs local JVM unit tests.
-- `.\gradlew :app:connectedDebugAndroidTest` runs instrumented tests on a device.
-- `.\gradlew build` builds all modules and runs checks.
+- `./gradlew :app:assembleDebug` builds a debug APK.
+- `./gradlew :app:installDebug` installs the debug build on a device/emulator.
+- `./gradlew :app:testDebugUnitTest` runs local JVM unit tests.
+- `./gradlew :app:connectedDebugAndroidTest` runs instrumented tests on a device.
+- `./gradlew build` builds all modules and runs checks.
 
 ## Coding Style & Naming Conventions
 - Language: Kotlin (JVM target 11).
@@ -25,19 +25,18 @@ Use the Gradle wrapper from the repo root (PowerShell examples):
 - Files and classes: `PascalCase` (e.g., `MainActivity.kt`).
 - Functions/vars: `camelCase` (e.g., `addition_isCorrect` in tests).
 - Packages: lowercase with dots, matching folder structure (e.g., `com.example.firstapp`).
-No explicit formatter or linter is configured; use Android Studioâ€™s Kotlin style and organize imports.
+- Formatting: no explicit formatter; use Android Studio¡¯s Kotlin style and organize imports.
 
 ## Testing Guidelines
-- Frameworks: JUnit4 for unit tests, AndroidX JUnit runner and Espresso for instrumented tests.
-- Naming: end test files with `*Test.kt` and test functions with descriptive verbs.
-- Place JVM tests under `app/src/test/java/` and device tests under `app/src/androidTest/java/`.
+- Frameworks: JUnit4 for unit tests; AndroidX JUnit runner and Espresso for instrumented tests.
+- Naming: end test files with `*Test.kt` and use descriptive verb-style test names.
+- Run JVM tests with `./gradlew :app:testDebugUnitTest` and device tests with `./gradlew :app:connectedDebugAndroidTest`.
 
 ## Commit & Pull Request Guidelines
-No Git history is available in this workspace, so there are no established commit conventions. Use concise, imperative messages such as `Add onboarding screen`.
-For PRs, include:
-- A short summary of the change and rationale.
-- Tests run (commands and results).
-- Screenshots or screen recordings for UI changes.
+- No Git history is available in this workspace, so no established commit conventions.
+- Use concise, imperative messages (e.g., `Add onboarding screen`).
+- PRs should include a short summary, rationale, tests run (commands + results), and screenshots/recordings for UI changes.
 
 ## Configuration & Local Environment
-`local.properties` is present for the Android SDK path. Keep SDK/local paths machine-specific and avoid sharing secrets (e.g., keystore files) in the repo.
+- `local.properties` holds the Android SDK path and is machine-specific.
+- Avoid committing secrets (e.g., keystores) or user-specific paths.

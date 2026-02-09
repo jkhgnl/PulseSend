@@ -10,7 +10,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.firstapp"
+        applicationId = "com.example.firstapp.pulse"
         minSdk = 35
         targetSdk = 36
         versionCode = 1

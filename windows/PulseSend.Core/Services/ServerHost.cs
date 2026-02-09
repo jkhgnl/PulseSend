@@ -143,10 +143,10 @@ public sealed class ServerHost
         {
             DeviceId = request.DeviceId,
             DeviceName = request.DeviceName,
-            Fingerprint = _fingerprint,
-            OutgoingToken = string.Empty,
+            Fingerprint = string.IsNullOrWhiteSpace(existing?.Fingerprint) ? _fingerprint : existing.Fingerprint,
+            OutgoingToken = existing?.OutgoingToken,
             IncomingToken = token,
-            Token = string.Empty,
+            Token = existing?.Token ?? string.Empty,
             PairedAt = DateTime.Now,
             LastSeenAddress = http.HttpContext.Connection.RemoteIpAddress?.ToString(),
             LastSeenPort = existing?.LastSeenPort

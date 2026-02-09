@@ -38,6 +38,8 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -51,6 +53,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,6 +91,7 @@ fun PulseSendApp() {
     val viewModel: MainViewModel = viewModel(factory = MainViewModelFactory(context))
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    var selectedTab by rememberSaveable { mutableStateOf(MainTab.Devices) }
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
@@ -109,6 +113,12 @@ fun PulseSendApp() {
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = { PulseTopBar() },
+        bottomBar = {
+            PulseBottomBar(
+                selectedTab = selectedTab,
+                onSelect = { selectedTab = it }
+            )
+        },
         containerColor = Color.Transparent
     ) { padding ->
         Box(
@@ -124,44 +134,46 @@ fun PulseSendApp() {
                     .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                item {
-                    HeroPanel()
-                }
-                item {
-                    PairCodeSection(
-                        snapshot = uiState.serverSnapshot,
-                        onRefresh = { viewModel.refreshPairCode() }
-                    )
-                }
-                item {
-                    DeviceSection(
-                        devices = uiState.devices,
-                        selectedDeviceId = uiState.selectedDeviceId,
-                        onSelect = { viewModel.selectDevice(it) },
-                        onPair = { pairingDevice = it }
-                    )
-                }
-                item {
-                    SendSection(
-                        selectedFiles = uiState.selectedFiles,
-                        onPickFiles = { launcher.launch(arrayOf("*/*")) },
-                        onClear = { viewModel.clearFiles() },
-                        onSend = { viewModel.sendSelectedFiles() }
-                    )
-                }
-                item {
-                    TextMessageSection(
-                        text = uiState.textDraft,
-                        onTextChange = { viewModel.updateTextDraft(it) },
-                        onSend = { viewModel.sendTextMessage() },
-                        onClear = { viewModel.clearTextDraft() }
-                    )
-                }
-                item {
-                    MessageSection(messages = uiState.messages)
-                }
-                item {
-                    TransferSection(transfers = uiState.transfers)
+                when (selectedTab) {
+                    MainTab.Devices -> {
+                        item { HeroPanel() }
+                        item {
+                            PairCodeSection(
+                                snapshot = uiState.serverSnapshot,
+                                onRefresh = { viewModel.refreshPairCode() }
+                            )
+                        }
+                        item {
+                            DeviceSection(
+                                devices = uiState.devices,
+                                selectedDeviceId = uiState.selectedDeviceId,
+                                onSelect = { viewModel.selectDevice(it) },
+                                onPair = { pairingDevice = it }
+                            )
+                        }
+                    }
+                    MainTab.Files -> {
+                        item {
+                            SendSection(
+                                selectedFiles = uiState.selectedFiles,
+                                onPickFiles = { launcher.launch(arrayOf("*/*")) },
+                                onClear = { viewModel.clearFiles() },
+                                onSend = { viewModel.sendSelectedFiles() }
+                            )
+                        }
+                        item { TransferSection(transfers = uiState.transfers) }
+                    }
+                    MainTab.Messages -> {
+                        item {
+                            TextMessageSection(
+                                text = uiState.textDraft,
+                                onTextChange = { viewModel.updateTextDraft(it) },
+                                onSend = { viewModel.sendTextMessage() },
+                                onClear = { viewModel.clearTextDraft() }
+                            )
+                        }
+                        item { MessageSection(messages = uiState.messages) }
+                    }
                 }
             }
         }
@@ -202,6 +214,44 @@ fun PulseSendApp() {
                 }
             }
         )
+    }
+}
+
+private enum class MainTab(val label: String, val iconText: String) {
+    Devices("\u8bbe\u5907", "\u8bbe"),
+    Files("\u6587\u4ef6", "\u6587"),
+    Messages("\u6d88\u606f", "\u4fe1")
+}
+
+@Composable
+private fun PulseBottomBar(
+    selectedTab: MainTab,
+    onSelect: (MainTab) -> Unit
+) {
+    NavigationBar(containerColor = Night.copy(alpha = 0.9f)) {
+        MainTab.values().forEach { tab ->
+            val isSelected = tab == selectedTab
+            NavigationBarItem(
+                selected = isSelected,
+                onClick = { onSelect(tab) },
+                icon = {
+                    Text(
+                        text = tab.iconText,
+                        color = if (isSelected) Ice else Ice.copy(alpha = 0.6f),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                },
+                label = {
+                    Text(
+                        text = tab.label,
+                        maxLines = 1,
+                        fontSize = 12.sp,
+                        color = if (isSelected) Ice else Ice.copy(alpha = 0.6f)
+                    )
+                },
+                alwaysShowLabel = true
+            )
+        }
     }
 }
 
