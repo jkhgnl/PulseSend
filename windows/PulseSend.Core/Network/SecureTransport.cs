@@ -11,6 +11,7 @@ namespace PulseSend.Core.Network;
 public sealed class SecureTransport
 {
     private const int DefaultPort = 48084;
+    private static readonly TimeSpan FreshDiscoveryWindow = TimeSpan.FromSeconds(12);
 
     private readonly TrustedDeviceRegistry _registry;
     private readonly JsonSerializerOptions _options = new()
@@ -55,6 +56,11 @@ public sealed class SecureTransport
         _ = E2eCrypto.DeriveSessionKey(keyPair.PrivateKey, peerRaw, salt, _infoBytes);
 
         var fingerprint = observedPin ?? parsed.Fingerprint;
+        if (!string.IsNullOrWhiteSpace(parsed.Fingerprint) &&
+            !string.Equals(fingerprint, parsed.Fingerprint, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("配对指纹校验失败。");
+        }
         var existing = _registry.FindById(parsed.DeviceId);
         var record = new DeviceRecord
         {
@@ -84,6 +90,10 @@ public sealed class SecureTransport
 
         string? observedPin = null;
         var expected = string.IsNullOrWhiteSpace(record.Fingerprint) ? null : record.Fingerprint;
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            throw new InvalidOperationException("缺少已信任指纹，请重新配对。");
+        }
         using var client = CreateClient(expected, pin => observedPin = pin);
 
         var keyPair = E2eCrypto.GenerateKeyPair();
@@ -94,7 +104,9 @@ public sealed class SecureTransport
             Token = outgoingToken
         };
 
-        var url = BuildUrl(device, record, "/session");
+        var host = ResolveHost(device, record);
+        var port = ResolvePort(device, record);
+        var url = UrlUtils.BuildHttpsUrl(host, port, "/session");
         var payload = JsonSerializer.Serialize(requestBody, _options);
         using var response = await client.PostAsync(url, new StringContent(payload, Encoding.UTF8, "application/json"));
         if (!response.IsSuccessStatusCode)
@@ -113,21 +125,36 @@ public sealed class SecureTransport
         var finalPin = observedPin ?? expected;
         if (!string.IsNullOrWhiteSpace(finalPin) && finalPin != record.Fingerprint)
         {
-            var updated = record with { Fingerprint = finalPin };
-            _registry.Upsert(updated);
+            throw new InvalidOperationException("设备指纹发生变化，请重新配对。");
         }
-        _registry.UpdateLastSeen(record.DeviceId, device.Address, ResolvePort(device, record));
+        _registry.UpdateLastSeen(record.DeviceId, host, port);
         return new E2eSession(sessionKey, outgoingToken, finalPin);
     }
 
     public async Task<bool> PingAsync(DeviceInfo device)
     {
         var record = _registry.FindById(device.Id);
-        var expected = record?.Fingerprint ?? device.Fingerprint;
+        var expected = record?.Fingerprint;
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            return false;
+        }
         using var client = CreateClient(string.IsNullOrWhiteSpace(expected) ? null : expected, _ => { });
         var url = BuildUrl(device, record, "/ping");
-        using var response = await client.GetAsync(url);
-        return response.IsSuccessStatusCode;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try
+        {
+            using var response = await client.GetAsync(url, cts.Token);
+            return response.IsSuccessStatusCode;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
     }
 
     private static HttpClient CreateClient(string? expectedPin, Action<string> onPinObserved)
@@ -154,8 +181,31 @@ public sealed class SecureTransport
 
     private static string BuildUrl(DeviceInfo device, DeviceRecord? record, string path)
     {
+        var host = ResolveHost(device, record);
         var port = ResolvePort(device, record);
-        return UrlUtils.BuildHttpsUrl(device.Address, port, path);
+        return UrlUtils.BuildHttpsUrl(host, port, path);
+    }
+
+    private static string ResolveHost(DeviceInfo device, DeviceRecord? record)
+    {
+        var hasFreshDiscovery = device.LastSeen > DateTime.MinValue
+            && DateTime.Now - device.LastSeen <= FreshDiscoveryWindow;
+        var deviceAddress = string.IsNullOrWhiteSpace(device.Address) ? null : device.Address;
+        var recordAddress = string.IsNullOrWhiteSpace(record?.LastSeenAddress) ? null : record!.LastSeenAddress;
+
+        if (hasFreshDiscovery && deviceAddress != null)
+        {
+            return deviceAddress;
+        }
+        if (recordAddress != null)
+        {
+            return recordAddress;
+        }
+        if (deviceAddress != null)
+        {
+            return deviceAddress;
+        }
+        throw new InvalidOperationException("设备地址为空。");
     }
 
     private static int ResolvePort(DeviceInfo device, DeviceRecord? record)

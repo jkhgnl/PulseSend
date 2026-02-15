@@ -8,8 +8,8 @@
         CanResize="False">
   <Border Padding="20" Background="{DynamicResource CardBackground}">
     <StackPanel Spacing="12">
-      <TextBlock Text="请输入对方设备显示的 6 位配对码"/>
-      <TextBox x:Name="CodeBox" Watermark="例如 123456" MaxLength="6"/>
+      <TextBlock Text="请输入对方设备显示的 8 位配对码"/>
+      <TextBox x:Name="CodeBox" Watermark="例如 12345678" MaxLength="8"/>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
         <Button x:Name="CancelButton" Content="取消"/>
         <Button x:Name="OkButton" Content="确定" Classes="primary"/>
@@ -17,6 +17,7 @@
     </StackPanel>
   </Border>
 </Window>
+
 
 
 

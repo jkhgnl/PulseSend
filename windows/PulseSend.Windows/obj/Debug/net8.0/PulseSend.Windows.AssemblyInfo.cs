@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PulseSend.Windows")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4c118c5414fc8786824f5fb9d4466ae61be73a8b")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+53b1167dff6b86b22afbe22bc69da251dc6e09fe")]
 [assembly: System.Reflection.AssemblyProductAttribute("PulseSend.Windows")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PulseSend.Windows")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

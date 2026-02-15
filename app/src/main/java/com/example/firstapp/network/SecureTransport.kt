@@ -23,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Semaphore
 
 private const val SESSION_TTL_SECONDS = 600L
+private const val FRESH_DISCOVERY_WINDOW_MS = 12_000L
 
 class SecureTransport(
     private val store: TrustedDeviceStore
@@ -60,6 +61,9 @@ class SecureTransport(
                 ?.firstOrNull() as? X509Certificate
             val pin = cert?.let { OkHttpFactory.certificatePin(it) }
                 ?: parsed.fingerprint.ifBlank { error("Missing peer fingerprint") }
+            if (parsed.fingerprint.isNotBlank() && pin != parsed.fingerprint) {
+                error("Pairing fingerprint mismatch")
+            }
             val existing = store.get(parsed.deviceId)
             store.save(
                 TrustedDeviceRecord(
@@ -78,10 +82,10 @@ class SecureTransport(
 
     suspend fun openSession(device: DeviceInfo, identity: DeviceIdentity): E2eSession =
         withContext(Dispatchers.IO) {
-            val trusted = store.get(device.id) ?: error("设备尚未配对。")
+            val trusted = store.get(device.id) ?: error("Device not paired")
             val outgoingToken = trusted.outgoingToken
             if (outgoingToken.isNullOrBlank()) {
-                error("设备尚未配对。")
+                error("Device not paired")
             }
             val cache = sessionCache.computeIfAbsent(device.id) { SessionCache() }
             cache.acquire()
@@ -102,7 +106,9 @@ class SecureTransport(
                     .post(json.encodeToString(SessionRequest.serializer(), requestBody).toRequestBody(mediaType))
                     .build()
 
-                val client = OkHttpFactory.pinnedClient(connection.host, trusted.fingerprint ?: "")
+                val trustedPin = trusted.fingerprint.takeUnless { it.isBlank() }
+                    ?: error("Missing trusted fingerprint; please re-pair.")
+                val client = OkHttpFactory.pinnedClient(connection.host, trustedPin)
                 val response = client.newCall(request).execute()
                 if (!response.isSuccessful) {
                     error("会话失败：${response.code}")
@@ -111,10 +117,8 @@ class SecureTransport(
                     ?.peerCertificates
                     ?.firstOrNull() as? X509Certificate
                 val observedPin = cert?.let { OkHttpFactory.certificatePin(it) }
-                val updatedPin = observedPin ?: connection.fingerprint ?: trusted.fingerprint
-                if (!updatedPin.isNullOrBlank() && updatedPin != trusted.fingerprint) {
-                    Log.d("PulseSend", "Fingerprint rotated: ${trusted.fingerprint} -> $updatedPin")
-                    store.save(trusted.copy(fingerprint = updatedPin))
+                if (!observedPin.isNullOrBlank() && observedPin != trustedPin) {
+                    error("Peer fingerprint changed. Re-pair required.")
                 }
                 val body = response.body?.string() ?: error("Empty session response")
                 val parsed = json.decodeFromString(SessionResponse.serializer(), body)
@@ -132,7 +136,7 @@ class SecureTransport(
                     token = outgoingToken,
                     host = connection.host,
                     port = connection.port,
-                    fingerprint = updatedPin
+                    fingerprint = trustedPin
                 )
                 cache.update(session)
                 session
@@ -144,28 +148,39 @@ class SecureTransport(
     suspend fun ping(device: DeviceInfo): Boolean =
         withContext(Dispatchers.IO) {
             val trusted = store.get(device.id)
+            val pin = trusted?.fingerprint?.takeUnless { it.isBlank() } ?: return@withContext false
             val connection = resolveConnection(device, trusted)
             val request = Request.Builder()
                 .url(buildUrl(connection, "/ping"))
                 .get()
                 .build()
-            val pin = connection.fingerprint ?: trusted?.fingerprint ?: ""
             val client = OkHttpFactory.pinnedClient(connection.host, pin)
             val response = client.newCall(request).execute()
             response.isSuccessful
         }
 
+    fun invalidateSession(deviceId: String) {
+        sessionCache.remove(deviceId)
+    }
+
     private fun resolveConnection(device: DeviceInfo, record: TrustedDeviceRecord?): ConnectionInfo {
-        val host = device.address.takeUnless { it.isBlank() }
-            ?: record?.lastAddress?.takeUnless { it.isNullOrBlank() }
-            ?: throw IllegalStateException("Missing host for device ${device.id}")
+        val hasFreshDiscovery = device.lastSeen > 0L &&
+            (System.currentTimeMillis() - device.lastSeen) <= FRESH_DISCOVERY_WINDOW_MS
+        val deviceHost = device.address.takeUnless { it.isBlank() }
+        val recordHost = record?.lastAddress?.takeUnless { it.isNullOrBlank() }
+        val host = when {
+            hasFreshDiscovery && deviceHost != null -> deviceHost
+            recordHost != null -> recordHost
+            deviceHost != null -> deviceHost
+            else -> throw IllegalStateException("Missing host for device ${device.id}")
+        }
         val port = if (device.tlsPort > 0) {
             device.tlsPort
         } else {
             record?.lastPort?.takeIf { it > 0 } ?: defaultPort
         }
-        val fingerprint = device.fingerprint?.takeUnless { it.isBlank() }
-            ?: record?.fingerprint
+        val fingerprint = record?.fingerprint?.takeUnless { it.isNullOrBlank() }
+            ?: device.fingerprint?.takeUnless { it.isBlank() }
         return ConnectionInfo(host, port, fingerprint)
     }
 
@@ -201,3 +216,6 @@ class SecureTransport(
         }
     }
 }
+
+
+

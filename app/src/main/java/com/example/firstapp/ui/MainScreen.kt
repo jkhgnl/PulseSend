@@ -1,5 +1,12 @@
-package com.example.firstapp.ui
+﻿package com.example.firstapp.ui
 
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -60,10 +67,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.firstapp.model.MessageDirection
 import com.example.firstapp.model.MessageItem
@@ -81,6 +92,8 @@ import com.example.firstapp.ui.theme.Slate
 import com.example.firstapp.viewmodel.DeviceUi
 import com.example.firstapp.viewmodel.MainViewModel
 import com.example.firstapp.viewmodel.MainViewModelFactory
+import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -97,6 +110,19 @@ fun PulseSendApp() {
     ) { uris ->
         if (uris.isNotEmpty()) {
             viewModel.addFiles(uris)
+        }
+    }
+    val folderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+            viewModel.updateIncomingFolder(uri)
         }
     }
 
@@ -154,6 +180,12 @@ fun PulseSendApp() {
                     }
                     MainTab.Files -> {
                         item {
+                            IncomingFolderSection(
+                                incomingFolderLabel = viewModel.getIncomingFolderLabel(),
+                                onChangeIncomingFolder = { folderLauncher.launch(null) }
+                            )
+                        }
+                        item {
                             SendSection(
                                 selectedFiles = uiState.selectedFiles,
                                 onPickFiles = { launcher.launch(arrayOf("*/*")) },
@@ -161,7 +193,26 @@ fun PulseSendApp() {
                                 onSend = { viewModel.sendSelectedFiles() }
                             )
                         }
-                        item { TransferSection(transfers = uiState.transfers) }
+                        item {
+                            TransferSection(
+                                transfers = uiState.transfers,
+                                onOpenTransfer = { transfer ->
+                                    val error = openTransferContent(context, transfer)
+                                    if (error != null) {
+                                        viewModel.notifyMessage(error)
+                                    }
+                                },
+                                onDeleteTransfer = { transfer ->
+                                    val error = deleteTransferContent(context, transfer)
+                                    if (error == null) {
+                                        viewModel.removeTransfer(transfer.id)
+                                        viewModel.notifyMessage("已删除 ${transfer.fileName}")
+                                    } else {
+                                        viewModel.notifyMessage(error)
+                                    }
+                                }
+                            )
+                        }
                     }
                     MainTab.Messages -> {
                         item {
@@ -185,13 +236,13 @@ fun PulseSendApp() {
             title = { Text("设备配对") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("请输入 ${pairingDevice!!.info.name} 上显示的 6 位配对码。")
+                    Text("请输入 ${pairingDevice!!.info.name} 上显示的 8 位配对码。")
                     TextField(
                         value = pairCode,
                         onValueChange = { value ->
-                            pairCode = value.filter { it.isDigit() }.take(6)
+                            pairCode = value.filter { it.isDigit() }.take(8)
                         },
-                        placeholder = { Text("123456") }
+                        placeholder = { Text("12345678") }
                     )
                 }
             },
@@ -211,6 +262,19 @@ fun PulseSendApp() {
                     pairingDevice = null
                 }) {
                     Text("取消")
+                }
+            }
+        )
+    }
+
+    uiState.alertMessage?.let { alert ->
+        AlertDialog(
+            onDismissRequest = { viewModel.clearAlertMessage() },
+            title = { Text("提示") },
+            text = { Text(alert) },
+            confirmButton = {
+                Button(onClick = { viewModel.clearAlertMessage() }) {
+                    Text("确定")
                 }
             }
         )
@@ -291,7 +355,7 @@ private fun HeroPanel() {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "发现附近设备，完成一次验证后即可全速传输，并全程端到端加密。",
+            text = "发现附近设备，完成一次验证后即可高速传输，并全程端到端加密。",
             style = MaterialTheme.typography.bodyLarge,
             color = Ice.copy(alpha = 0.8f)
         )
@@ -328,7 +392,7 @@ private fun PairCodeSection(
     onRefresh: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionHeader(title = "本机配对码", subtitle = "让对方输入该 6 位码完成配对")
+        SectionHeader(title = "本机配对码", subtitle = "让对方输入该 8 位码完成配对")
         GlassCard {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -401,9 +465,7 @@ private fun DeviceCard(
         targetValue = if (isSelected) Aurora else Color.White.copy(alpha = 0.12f),
         label = "deviceHighlight"
     )
-    val pairLabel = if (!device.isOnline) {
-        "未配对"
-    } else when {
+    val pairLabel = when {
         device.canSend && device.canReceive -> "双向已配对"
         device.canSend -> "可发送"
         device.canReceive -> "已授权对方"
@@ -559,6 +621,7 @@ private fun TextMessageSection(
 
 @Composable
 private fun MessageSection(messages: List<MessageItem>) {
+    var fullMessageContent by remember { mutableStateOf<String?>(null) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader(title = "文本消息", subtitle = "端到端加密的收发记录")
         if (messages.isEmpty()) {
@@ -570,36 +633,109 @@ private fun MessageSection(messages: List<MessageItem>) {
             }
         } else {
             messages.forEach { message ->
-                MessageCard(message)
+                MessageCard(
+                    message = message,
+                    onExpandRequest = { fullMessageContent = it }
+                )
             }
         }
     }
+
+    if (fullMessageContent != null) {
+        AlertDialog(
+            onDismissRequest = { fullMessageContent = null },
+            title = { Text("消息全文") },
+            text = { Text(text = fullMessageContent.orEmpty()) },
+            confirmButton = {
+                Button(onClick = { fullMessageContent = null }) {
+                    Text("关闭")
+                }
+            }
+        )
+    }
+
 }
 
 @Composable
-private fun MessageCard(message: MessageItem) {
+private fun MessageCard(
+    message: MessageItem,
+    onExpandRequest: (String) -> Unit
+) {
     val tone = if (message.direction == MessageDirection.Incoming) Aurora else Ember
+    val clipboard = LocalClipboardManager.current
+    var hasVisualOverflow by remember(message.id, message.content) { mutableStateOf(false) }
     GlassCard {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
+            Column {
+                Text(
+                    text = if (message.direction == MessageDirection.Incoming) "收自" else "发送至",
+                    color = tone,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(text = formatTime(message.timestamp), color = Slate)
+            }
             Text(
-                text = if (message.direction == MessageDirection.Incoming) "收到" else "已发送",
-                color = tone,
-                fontWeight = FontWeight.SemiBold
+                text = "可复制",
+                color = Ice.copy(alpha = 0.75f),
+                fontSize = 12.sp
             )
-            Text(text = formatTime(message.timestamp), color = Slate)
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(text = message.peerName, color = Ice.copy(alpha = 0.8f))
         Spacer(modifier = Modifier.height(4.dp))
-        Text(text = message.content, color = Ice)
+        Text(
+            text = message.content,
+            color = Ice,
+            maxLines = 4,
+            overflow = TextOverflow.Ellipsis,
+            onTextLayout = { result ->
+                hasVisualOverflow = result.hasVisualOverflow
+            }
+        )
+        if (hasVisualOverflow) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { onExpandRequest(message.content) }) {
+                    Text("...")
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        FilledTonalButton(
+            onClick = { clipboard.setText(AnnotatedString(message.content)) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("复制消息内容")
+        }
     }
 }
 
 @Composable
-private fun TransferSection(transfers: List<com.example.firstapp.model.TransferItem>) {
+private fun IncomingFolderSection(
+    incomingFolderLabel: String,
+    onChangeIncomingFolder: () -> Unit
+) {
+    GlassCard {
+        SectionHeader(title = "保存位置设置", subtitle = "接收文件默认保存到这里")
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(
+            onClick = onChangeIncomingFolder,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("点此选择保存位置")
+        }
+        Text(text = incomingFolderLabel, color = Ice.copy(alpha = 0.7f), fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun TransferSection(
+    transfers: List<com.example.firstapp.model.TransferItem>,
+    onOpenTransfer: (com.example.firstapp.model.TransferItem) -> Unit,
+    onDeleteTransfer: (com.example.firstapp.model.TransferItem) -> Unit
+) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader(title = "传输进度", subtitle = "实时进度与速度")
         if (transfers.isEmpty()) {
@@ -611,14 +747,22 @@ private fun TransferSection(transfers: List<com.example.firstapp.model.TransferI
             }
         } else {
             transfers.forEach { transfer ->
-                TransferCard(transfer)
+                TransferCard(
+                    transfer = transfer,
+                    onOpen = { onOpenTransfer(transfer) },
+                    onDelete = { onDeleteTransfer(transfer) }
+                )
             }
         }
     }
 }
 
 @Composable
-private fun TransferCard(transfer: com.example.firstapp.model.TransferItem) {
+private fun TransferCard(
+    transfer: com.example.firstapp.model.TransferItem,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit
+) {
     val progress = if (transfer.totalBytes <= 0L) 0f
     else (transfer.sentBytes.toFloat() / transfer.totalBytes.toFloat()).coerceIn(0f, 1f)
     val progressColor = when (transfer.status) {
@@ -626,18 +770,25 @@ private fun TransferCard(transfer: com.example.firstapp.model.TransferItem) {
         TransferStatus.Failed -> Coral
         else -> Ember
     }
-    GlassCard {
+    val canOpen = transfer.status == TransferStatus.Completed &&
+        (!transfer.localPath.isNullOrBlank() || !transfer.localUri.isNullOrBlank())
+    val canDelete = !transfer.localPath.isNullOrBlank() || !transfer.localUri.isNullOrBlank()
+
+    GlassCard(
+        modifier = if (canOpen) Modifier.clickable(onClick = onOpen) else Modifier
+    ) {
         Text(text = transfer.fileName, color = Ice, fontWeight = FontWeight.SemiBold)
         Spacer(modifier = Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             val directionText = if (transfer.direction == com.example.firstapp.model.TransferDirection.Upload) {
-                "上传"
+                "发送文件"
             } else {
-                "下载"
+                "接收文件"
             }
             Text(text = "$directionText · ${statusText(transfer.status)}", color = Slate)
             Text(text = "${formatBytes(transfer.speedBytesPerSec)}/s", color = Slate)
         }
+        Text(text = "时间：${formatDateTime(transfer.updatedAt)}", color = Slate.copy(alpha = 0.9f), fontSize = 12.sp)
         Spacer(modifier = Modifier.height(8.dp))
         LinearProgressIndicator(
             progress = { progress },
@@ -653,6 +804,21 @@ private fun TransferCard(transfer: com.example.firstapp.model.TransferItem) {
             text = "${formatBytes(transfer.sentBytes)} / ${formatBytes(transfer.totalBytes)}",
             color = Ice.copy(alpha = 0.7f)
         )
+        if (canOpen) {
+            Text(
+                text = "点击卡片可预览/打开",
+                color = Ice.copy(alpha = 0.65f),
+                fontSize = 12.sp
+            )
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = onDelete, enabled = canDelete) {
+                Text("🗑")
+            }
+            Button(onClick = onOpen, enabled = canOpen) {
+                Text("打开/预览")
+            }
+        }
     }
 }
 
@@ -665,7 +831,10 @@ private fun SectionHeader(title: String, subtitle: String) {
 }
 
 @Composable
-private fun GlassCard(content: @Composable ColumnScope.() -> Unit) {
+private fun GlassCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
     val shape = RoundedCornerShape(24.dp)
     val transition = rememberInfiniteTransition(label = "glassFlow")
     val glow by transition.animateFloat(
@@ -678,7 +847,7 @@ private fun GlassCard(content: @Composable ColumnScope.() -> Unit) {
         label = "glassGlow"
     )
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(shape)
             .background(Glass.copy(alpha = glow))
@@ -747,10 +916,169 @@ private fun formatTime(timestamp: Long): String {
     return formatter.format(Date(timestamp))
 }
 
+private fun formatDateTime(timestamp: Long): String {
+    val formatter = SimpleDateFormat("MM-dd HH:mm:ss", Locale.CHINA)
+    return formatter.format(Date(timestamp))
+}
+
 private fun shortFingerprint(value: String): String {
     if (value.length <= 18) return value
     return value.take(18) + "..."
 }
+
+private fun openTransferContent(
+    context: android.content.Context,
+    transfer: com.example.firstapp.model.TransferItem
+): String? {
+    if (isApkFile(transfer.fileName)) {
+        val installUri = prepareApkInstallUri(context, transfer) ?: return "APK 文件不可用"
+        return openApkInstaller(context, installUri)
+    }
+    val targetUri = buildTransferUri(context, transfer) ?: return "文件不存在或路径不可用"
+    val mime = guessMimeType(transfer.fileName)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(targetUri, mime)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    val chooser = Intent.createChooser(intent, "选择打开方式").apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    return try {
+        context.startActivity(chooser)
+        null
+    } catch (_: ActivityNotFoundException) {
+        val fallback = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(targetUri, "*/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val fallbackChooser = Intent.createChooser(fallback, "选择打开方式").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return try {
+            context.startActivity(fallbackChooser)
+            null
+        } catch (_: Exception) {
+            "没有可用应用打开该文件"
+        }
+    } catch (e: Exception) {
+        "打开失败：${e.message ?: "未知错误"}"
+    }
+}
+
+private fun prepareApkInstallUri(
+    context: android.content.Context,
+    transfer: com.example.firstapp.model.TransferItem
+): Uri? {
+    val sourceUri = buildTransferUri(context, transfer) ?: return null
+    val cacheFile = File(context.cacheDir, "install_${transfer.id}.apk")
+    return runCatching {
+        context.contentResolver.openInputStream(sourceUri)?.use { input ->
+            FileOutputStream(cacheFile).use { output ->
+                input.copyTo(output)
+            }
+        } ?: return null
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cacheFile)
+    }.getOrNull()
+}
+
+private fun openApkInstaller(context: android.content.Context, apkUri: Uri): String? {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+        !context.packageManager.canRequestPackageInstalls()
+    ) {
+        openUnknownSourcesSettings(context)
+        return "请先允许本应用安装未知应用，然后返回重试安装"
+    }
+
+    val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+        setDataAndType(apkUri, "application/vnd.android.package-archive")
+        clipData = ClipData.newUri(context.contentResolver, "apk", apkUri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(apkUri, "application/vnd.android.package-archive")
+        clipData = ClipData.newUri(context.contentResolver, "apk", apkUri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    return try {
+        if (viewIntent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(viewIntent)
+        } else if (installIntent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(installIntent)
+        } else {
+            return "系统未找到可用的安装器"
+        }
+        null
+    } catch (_: ActivityNotFoundException) {
+        return try {
+            context.startActivity(installIntent)
+            null
+        } catch (_: Exception) {
+            "系统未找到可用的安装器"
+        }
+    } catch (e: SecurityException) {
+        openUnknownSourcesSettings(context)
+        "系统拦截安装，请先允许本应用安装未知应用后重试"
+    } catch (e: Exception) {
+        "安装启动失败：${e.message ?: "未知错误"}"
+    }
+}
+
+private fun openUnknownSourcesSettings(context: android.content.Context) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+        data = Uri.parse("package:${context.packageName}")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching { context.startActivity(intent) }
+}
+
+private fun buildTransferUri(
+    context: android.content.Context,
+    transfer: com.example.firstapp.model.TransferItem
+): Uri? {
+    transfer.localUri?.takeIf { it.isNotBlank() }?.let { return Uri.parse(it) }
+    val path = transfer.localPath?.takeIf { it.isNotBlank() } ?: return null
+    val file = File(path)
+    if (!file.exists()) return null
+    return FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file
+    )
+}
+
+private fun deleteTransferContent(
+    context: android.content.Context,
+    transfer: com.example.firstapp.model.TransferItem
+): String? {
+    transfer.localUri?.takeIf { it.isNotBlank() }?.let { raw ->
+        val uri = Uri.parse(raw)
+        val deleted = runCatching {
+            DocumentsContract.deleteDocument(context.contentResolver, uri)
+        }.getOrDefault(false)
+        return if (deleted) null else "删除失败：文件不存在或无权限"
+    }
+    val path = transfer.localPath?.takeIf { it.isNotBlank() } ?: return "删除失败：路径不可用"
+    val file = File(path)
+    if (!file.exists()) return "删除失败：文件不存在"
+    return if (file.delete()) null else "删除失败：文件被占用或无权限"
+}
+
+private fun guessMimeType(fileName: String): String {
+    val lower = fileName.lowercase(Locale.ROOT)
+    return when {
+        lower.endsWith(".apk") -> "application/vnd.android.package-archive"
+        lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp") || lower.endsWith(".gif") -> "image/*"
+        lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".webm") || lower.endsWith(".mov") || lower.endsWith(".avi") -> "video/*"
+        else -> java.net.URLConnection.guessContentTypeFromName(fileName) ?: "*/*"
+    }
+}
+
+private fun isApkFile(fileName: String): Boolean = fileName.lowercase(Locale.ROOT).endsWith(".apk")
 
 private fun statusText(status: TransferStatus): String =
     when (status) {
@@ -760,3 +1088,5 @@ private fun statusText(status: TransferStatus): String =
         TransferStatus.Completed -> "已完成"
         TransferStatus.Failed -> "已失败"
     }
+
+

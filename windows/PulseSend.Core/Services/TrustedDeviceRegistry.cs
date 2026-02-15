@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using PulseSend.Core.Models;
 using PulseSend.Core.Storage;
 
@@ -14,8 +14,6 @@ public sealed class TrustedDeviceRegistry
     {
         _store = store;
         _devices = store.Load();
-        _store.Clear();
-        _devices.Clear();
     }
 
     public IReadOnlyList<DeviceRecord> GetAll()
@@ -148,6 +146,7 @@ public sealed class TrustedDeviceRegistry
         return null;
     }
 }
+
 
 
 

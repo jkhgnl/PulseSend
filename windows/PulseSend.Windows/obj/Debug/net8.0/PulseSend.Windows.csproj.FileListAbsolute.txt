@@ -75,3 +75,4 @@ E:\Programme\Android\FirstAPP2\windows\PulseSend.Windows\obj\Debug\net8.0\PulseS
 E:\Programme\Android\FirstAPP2\windows\PulseSend.Windows\obj\Debug\net8.0\PulseSen.CB29C5DA.Up2Date
 E:\Programme\Android\FirstAPP2\windows\PulseSend.Windows\obj\Debug\net8.0\PulseSend.Windows.genruntimeconfig.cache
 E:\Programme\Android\FirstAPP2\windows\PulseSend.Windows\obj\Debug\net8.0\ref\PulseSend.Windows.dll
+E:\Programme\Android\FirstAPP2\windows\PulseSend.Windows\bin\Debug\net8.0\System.Security.Cryptography.ProtectedData.dll

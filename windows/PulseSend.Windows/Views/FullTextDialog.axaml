@@ -1,0 +1,19 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="PulseSend.Windows.Views.FullTextDialog"
+        Width="560"
+        Height="420"
+        WindowStartupLocation="CenterOwner"
+        CanResize="True"
+        Title="消息全文">
+  <Border Padding="16" Background="{DynamicResource CardBackground}">
+    <Grid RowDefinitions="*,Auto">
+      <ScrollViewer Margin="0,0,0,12">
+        <TextBlock x:Name="FullTextBlock" TextWrapping="Wrap"/>
+      </ScrollViewer>
+      <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button x:Name="CloseButton" Content="关闭" Classes="primary"/>
+      </StackPanel>
+    </Grid>
+  </Border>
+</Window>

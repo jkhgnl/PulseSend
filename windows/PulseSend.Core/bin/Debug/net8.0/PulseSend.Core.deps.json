@@ -8,7 +8,8 @@
     ".NETCoreApp,Version=v8.0": {
       "PulseSend.Core/1.0.0": {
         "dependencies": {
-          "NSec.Cryptography": "24.4.0"
+          "NSec.Cryptography": "24.4.0",
+          "System.Security.Cryptography.ProtectedData": "9.0.0"
         },
         "runtime": {
           "PulseSend.Core.dll": {}
@@ -78,6 +79,14 @@
             "fileVersion": "24.4.0.0"
           }
         }
+      },
+      "System.Security.Cryptography.ProtectedData/9.0.0": {
+        "runtime": {
+          "lib/net8.0/System.Security.Cryptography.ProtectedData.dll": {
+            "assemblyVersion": "9.0.0.0",
+            "fileVersion": "9.0.24.52809"
+          }
+        }
       }
     }
   },
@@ -100,6 +109,13 @@
       "sha512": "sha512-R89OF0T5OY9QnPRoTsMCaPKMqtXcWKZSWAO4zyUaFHI+ZRMgXU7WaIwg/rPP3vOfdaLl8HdUHWkDB+2B9FOO7g==",
       "path": "nsec.cryptography/24.4.0",
       "hashPath": "nsec.cryptography.24.4.0.nupkg.sha512"
+    },
+    "System.Security.Cryptography.ProtectedData/9.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-CJW+x/F6fmRQ7N6K8paasTw9PDZp4t7G76UjGNlSDgoHPF0h08vTzLYbLZpOLEJSg35d5wy2jCXGo84EN05DpQ==",
+      "path": "system.security.cryptography.protecteddata/9.0.0",
+      "hashPath": "system.security.cryptography.protecteddata.9.0.0.nupkg.sha512"
     }
   }
 }

@@ -1,7 +1,10 @@
 ﻿using System.Net.Http;
+using System.Collections.Concurrent;
+using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using PulseSend.Core.Crypto;
 using PulseSend.Core.Models;
 using PulseSend.Core.Protocol;
@@ -10,8 +13,11 @@ namespace PulseSend.Core.Network;
 
 public sealed class TransferClient
 {
-    private const int ChunkSize = 1_048_576;
+    private const int ChunkSize = 2_097_152;
     private const int DefaultPort = 48084;
+    private const int MaxParallelChunks = 8;
+
+    private static readonly ConcurrentDictionary<string, HttpClient> ClientCache = new();
 
     private readonly SecureTransport _transport;
     private readonly DeviceIdentity _identity;
@@ -47,7 +53,7 @@ public sealed class TransferClient
             ChunkSize = ChunkSize
         };
 
-        using var client = CreatePinnedClient(session.Fingerprint);
+        var client = CreatePinnedClient(session.Fingerprint);
         var initResponse = await PostJsonAsync<TransferInitResponse>(client, device, "/transfer/init", initRequest, session.Token);
         if (!initResponse.Accepted)
         {
@@ -59,12 +65,15 @@ public sealed class TransferClient
         onProgress?.Invoke(new TransferProgress(initResponse.TransferId, fileInfo.Name, 0, fileSize, "准备中"));
 
         using var stream = new FileStream(fileInfo.FullName, FileMode.Open, FileAccess.Read, FileShare.Read);
-        var buffer = new byte[ChunkSize];
+        var parallelism = Math.Max(2, Math.Min(MaxParallelChunks, Environment.ProcessorCount));
+        using var gate = new SemaphoreSlim(parallelism, parallelism);
+        var inFlight = new List<Task<long>>();
         var index = 0;
         var sent = 0L;
         while (true)
         {
-            var read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length));
+            var chunk = new byte[ChunkSize];
+            var read = await stream.ReadAsync(chunk.AsMemory(0, chunk.Length));
             if (read <= 0)
             {
                 break;
@@ -72,28 +81,62 @@ public sealed class TransferClient
             var shouldSend = missing.Count == 0 || missing.Contains(index);
             if (shouldSend)
             {
-                var chunk = buffer.AsSpan(0, read).ToArray();
-                var nonce = CryptoUtils.RandomBytes(12);
-                var aad = Encoding.UTF8.GetBytes($"{initResponse.TransferId}:{index}");
-                var cipher = E2eCrypto.Encrypt(session.Key, nonce, aad, chunk);
-                var chunkRequest = new TransferChunkRequest
+                if (read < chunk.Length)
                 {
-                    TransferId = initResponse.TransferId,
-                    Index = index,
-                    TotalChunks = totalChunks,
-                    Nonce = CryptoUtils.ToBase64(nonce),
-                    CipherText = CryptoUtils.ToBase64(cipher),
-                    Aad = CryptoUtils.ToBase64(aad)
-                };
-                var chunkResponse = await PostJsonAsync<TransferChunkResponse>(client, device, "/transfer/chunk", chunkRequest, session.Token);
-                if (!chunkResponse.Received)
+                    Array.Resize(ref chunk, read);
+                }
+                var chunkIndex = index;
+                await gate.WaitAsync();
+                var sendTask = Task.Run(async () =>
                 {
-                    throw new InvalidOperationException("分片发送失败。");
+                    try
+                    {
+                        var nonce = CryptoUtils.RandomBytes(12);
+                        var aad = Encoding.UTF8.GetBytes($"{initResponse.TransferId}:{chunkIndex}");
+                        var cipher = E2eCrypto.Encrypt(session.Key, nonce, aad, chunk);
+                        var chunkRequest = new TransferChunkRequest
+                        {
+                            TransferId = initResponse.TransferId,
+                            Index = chunkIndex,
+                            TotalChunks = totalChunks,
+                            Nonce = CryptoUtils.ToBase64(nonce),
+                            CipherText = CryptoUtils.ToBase64(cipher),
+                            Aad = CryptoUtils.ToBase64(aad)
+                        };
+                        var chunkResponse = await PostJsonAsync<TransferChunkResponse>(client, device, "/transfer/chunk", chunkRequest, session.Token);
+                        if (!chunkResponse.Received)
+                        {
+                            throw new InvalidOperationException("分片发送失败。");
+                        }
+                        return (long)chunk.Length;
+                    }
+                    finally
+                    {
+                        gate.Release();
+                    }
+                });
+                inFlight.Add(sendTask);
+                if (inFlight.Count >= parallelism * 2)
+                {
+                    var finished = await Task.WhenAny(inFlight);
+                    inFlight.Remove(finished);
+                    sent += await finished;
+                    onProgress?.Invoke(new TransferProgress(initResponse.TransferId, fileInfo.Name, sent, fileSize, "传输中"));
                 }
             }
-            sent += read;
-            onProgress?.Invoke(new TransferProgress(initResponse.TransferId, fileInfo.Name, sent, fileSize, "传输中"));
+            else
+            {
+                sent += read;
+                onProgress?.Invoke(new TransferProgress(initResponse.TransferId, fileInfo.Name, sent, fileSize, "传输中"));
+            }
             index++;
+        }
+        while (inFlight.Count > 0)
+        {
+            var finished = await Task.WhenAny(inFlight);
+            inFlight.Remove(finished);
+            sent += await finished;
+            onProgress?.Invoke(new TransferProgress(initResponse.TransferId, fileInfo.Name, sent, fileSize, "传输中"));
         }
         onProgress?.Invoke(new TransferProgress(initResponse.TransferId, fileInfo.Name, sent, fileSize, "已完成"));
     }
@@ -101,7 +144,7 @@ public sealed class TransferClient
     public async Task SendMessageAsync(DeviceInfo device, string text)
     {
         var session = await _transport.OpenSessionAsync(device, _identity);
-        using var client = CreatePinnedClient(session.Fingerprint);
+        var client = CreatePinnedClient(session.Fingerprint);
         var messageId = Guid.NewGuid().ToString("N");
         var nonce = CryptoUtils.RandomBytes(12);
         var aad = Encoding.UTF8.GetBytes($"message:{messageId}");
@@ -145,23 +188,38 @@ public sealed class TransferClient
 
     private static HttpClient CreatePinnedClient(string? expectedPin)
     {
-        var handler = new HttpClientHandler();
-        handler.ServerCertificateCustomValidationCallback = (_, certificate, _, _) =>
+        var key = string.IsNullOrWhiteSpace(expectedPin) ? "__empty_pin__" : expectedPin;
+        return ClientCache.GetOrAdd(key, _ =>
         {
-            if (certificate is X509Certificate2 cert)
+            var handler = new SocketsHttpHandler
             {
-                var pin = CryptoUtils.ComputePin(cert);
-                if (!string.IsNullOrWhiteSpace(expectedPin))
+                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
+                PooledConnectionLifetime = TimeSpan.FromMinutes(15),
+                MaxConnectionsPerServer = 24,
+                AutomaticDecompression = DecompressionMethods.None,
+                SslOptions =
                 {
-                    return string.Equals(pin, expectedPin, StringComparison.Ordinal);
+                    RemoteCertificateValidationCallback = (_, certificate, _, _) =>
+                    {
+                        if (certificate is X509Certificate2 cert)
+                        {
+                            var pin = CryptoUtils.ComputePin(cert);
+                            if (!string.IsNullOrWhiteSpace(expectedPin))
+                            {
+                                return string.Equals(pin, expectedPin, StringComparison.Ordinal);
+                            }
+                        }
+                        return string.IsNullOrWhiteSpace(expectedPin);
+                    }
                 }
-            }
-            return string.IsNullOrWhiteSpace(expectedPin);
-        };
-        return new HttpClient(handler)
-        {
-            Timeout = TimeSpan.FromSeconds(30)
-        };
+            };
+            return new HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromSeconds(30),
+                DefaultRequestVersion = HttpVersion.Version20,
+                DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower
+            };
+        });
     }
 
     private static HashResult ComputeSha256(FileInfo file)
@@ -183,6 +241,9 @@ public sealed class TransferClient
 
     private sealed record HashResult(string Hash, long Size);
 }
+
+
+
 
 
 

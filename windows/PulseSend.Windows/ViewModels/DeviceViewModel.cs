@@ -134,10 +134,6 @@ public sealed class DeviceViewModel : ViewModelBase
     {
         get
         {
-            if (!IsOnline)
-            {
-                return "未配对";
-            }
             if (CanSend && CanReceive)
             {
                 return "双向已配对";
@@ -244,7 +240,7 @@ public sealed class DeviceViewModel : ViewModelBase
 
     private void UpdateOnlineStatus()
     {
-        var onlineWindow = TimeSpan.FromSeconds(3);
+        var onlineWindow = TimeSpan.FromSeconds(8);
         IsOnline = DateTime.Now - LastSeen <= onlineWindow;
     }
 }

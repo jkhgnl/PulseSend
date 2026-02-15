@@ -20,9 +20,9 @@ public partial class PairDialog : Window
             return;
         }
         var filtered = new string(text.Where(char.IsDigit).ToArray());
-        if (filtered.Length > 6)
+        if (filtered.Length > 8)
         {
-            filtered = filtered.Substring(0, 6);
+            filtered = filtered.Substring(0, 8);
         }
         if (filtered != text)
         {

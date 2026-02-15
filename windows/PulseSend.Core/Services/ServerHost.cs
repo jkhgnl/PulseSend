@@ -23,6 +23,11 @@ public sealed class ServerHost
 
     private const int DiscoveryPort = 24821;
     private const int DefaultTlsPort = 48084;
+    private const int PairMaxFailures = 8;
+    private static readonly TimeSpan PairBlockWindow = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MessageReplayWindow = TimeSpan.FromMinutes(30);
+    private const int MessageReplayMaxEntries = 4096;
+    private const string CertificatePassword = "PulseSendLocalCert";
 
     private readonly object _sync = new();
     private readonly TrustedDeviceRegistry _registry;
@@ -31,6 +36,8 @@ public sealed class ServerHost
     private readonly ConcurrentDictionary<string, TransferState> _transfersById = new();
     private readonly ConcurrentDictionary<string, TransferState> _transfersByHash = new();
     private readonly ConcurrentDictionary<string, TransferViewItem> _transferViews = new();
+    private readonly ConcurrentDictionary<string, PairFailureState> _pairFailures = new();
+    private readonly ConcurrentDictionary<string, DateTime> _seenMessageIds = new();
     private readonly List<MessageViewItem> _messages = new();
     private readonly CancellationTokenSource _cts = new();
 
@@ -40,6 +47,7 @@ public sealed class ServerHost
     private string _fingerprint = "";
     private string _pairCode = "------";
     private string _statusText = "未启动";
+    private string _incomingFolder = ResolveDefaultIncomingFolder();
 
     private readonly int _port;
     private readonly DeviceIdentity _identity;
@@ -56,6 +64,19 @@ public sealed class ServerHost
     }
 
     public ServerSnapshot GetSnapshot() => BuildSnapshot();
+
+    public string IncomingFolder => _incomingFolder;
+
+    public void SetIncomingFolder(string folderPath)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath))
+        {
+            return;
+        }
+        Directory.CreateDirectory(folderPath);
+        _incomingFolder = folderPath;
+        PublishSnapshot();
+    }
 
     public void RegeneratePairCode()
     {
@@ -126,10 +147,17 @@ public sealed class ServerHost
 
     private IResult HandlePair(HttpRequest http, PairRequest request)
     {
+        var remote = http.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        if (IsPairBlocked(remote))
+        {
+            return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+        }
         if (string.IsNullOrWhiteSpace(request.Code) || request.Code != _pairCode)
         {
+            RecordPairFailure(remote);
             return Results.StatusCode(StatusCodes.Status403Forbidden);
         }
+        ClearPairFailures(remote);
 
         var peerSpki = CryptoUtils.FromBase64(request.PublicKey);
         var peerRaw = SpkiUtils.DecodeX25519PublicKey(peerSpki);
@@ -221,7 +249,7 @@ public sealed class ServerHost
             }
             else
             {
-                state = TransferState.Create(request, ResolveIncomingFolder());
+                state = TransferState.Create(request, _incomingFolder);
                 _transfersByHash[request.Sha256] = state;
                 _transfersById[state.TransferId] = state;
                 missing = new List<int>();
@@ -321,6 +349,14 @@ public sealed class ServerHost
         var messageId = string.IsNullOrWhiteSpace(request.MessageId)
             ? Guid.NewGuid().ToString("N")
             : request.MessageId;
+        CleanupSeenMessageIds();
+        var now = DateTime.UtcNow;
+        if (_seenMessageIds.TryGetValue(messageId, out var seenAt) &&
+            now - seenAt <= MessageReplayWindow)
+        {
+            return Results.Json(new TextMessageResponse { Received = true });
+        }
+        _seenMessageIds[messageId] = now;
         var deviceName = _tokenIndex.TryGetValue(token, out var record) ? record.DeviceName : "未知设备";
 
         lock (_sync)
@@ -439,7 +475,9 @@ public sealed class ServerHost
             TotalBytes = state.TotalBytes,
             ReceivedBytes = state.ReceivedBytes,
             StatusText = status,
-            Direction = TransferDirection.Incoming
+            Direction = TransferDirection.Incoming,
+            SavedPath = status == "已完成" ? state.FinalPath : null,
+            UpdatedAt = DateTime.Now
         };
         _transferViews[state.TransferId] = view;
         PublishSnapshot();
@@ -452,6 +490,11 @@ public sealed class ServerHost
             view.ReceivedBytes = state.ReceivedBytes;
             view.TotalBytes = state.TotalBytes;
             view.StatusText = status;
+            view.UpdatedAt = DateTime.Now;
+            if (status == "已完成")
+            {
+                view.SavedPath = state.FinalPath;
+            }
         }
         PublishSnapshot();
     }
@@ -475,7 +518,9 @@ public sealed class ServerHost
                         TotalBytes = t.TotalBytes,
                         ReceivedBytes = t.ReceivedBytes,
                         StatusText = t.StatusText,
-                        Direction = t.Direction
+                        Direction = t.Direction,
+                        SavedPath = t.SavedPath,
+                        UpdatedAt = t.UpdatedAt
                     })
                     .ToList(),
                 Messages = _messages
@@ -511,7 +556,56 @@ public sealed class ServerHost
     }
 
     private static string GeneratePairCode() =>
-        RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+        RandomNumberGenerator.GetInt32(0, 100_000_000).ToString("D8");
+
+    private bool IsPairBlocked(string remote)
+    {
+        if (!_pairFailures.TryGetValue(remote, out var state))
+        {
+            return false;
+        }
+        return state.BlockedUntil > DateTime.UtcNow;
+    }
+
+    private void RecordPairFailure(string remote)
+    {
+        _pairFailures.AddOrUpdate(
+            remote,
+            _ => new PairFailureState(1, DateTime.MinValue),
+            (_, previous) =>
+            {
+                var failures = previous.Failures + 1;
+                var blockedUntil = failures >= PairMaxFailures
+                    ? DateTime.UtcNow.Add(PairBlockWindow)
+                    : DateTime.MinValue;
+                return new PairFailureState(failures, blockedUntil);
+            });
+    }
+
+    private void ClearPairFailures(string remote)
+    {
+        _pairFailures.TryRemove(remote, out _);
+    }
+
+    private void CleanupSeenMessageIds()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var kv in _seenMessageIds)
+        {
+            if (now - kv.Value > MessageReplayWindow)
+            {
+                _seenMessageIds.TryRemove(kv.Key, out _);
+            }
+        }
+        if (_seenMessageIds.Count > MessageReplayMaxEntries)
+        {
+            var overflow = _seenMessageIds.Count - MessageReplayMaxEntries;
+            foreach (var key in _seenMessageIds.OrderBy(k => k.Value).Take(overflow).Select(k => k.Key))
+            {
+                _seenMessageIds.TryRemove(key, out _);
+            }
+        }
+    }
 
     private static X509Certificate2 LoadOrCreateCertificate()
     {
@@ -521,24 +615,33 @@ public sealed class ServerHost
             try
             {
                 var bytes = File.ReadAllBytes(path);
-                return new X509Certificate2(bytes, (string?)null, X509KeyStorageFlags.Exportable);
+                return new X509Certificate2(
+                    bytes,
+                    CertificatePassword,
+                    X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.UserKeySet);
             }
             catch
             {
-                // fall through to regenerate
+                // Backward-compat: try loading legacy certs exported without password, then migrate.
+                try
+                {
+                    var legacyBytes = File.ReadAllBytes(path);
+                    var legacy = new X509Certificate2(
+                        legacyBytes,
+                        (string?)null,
+                        X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.UserKeySet);
+                    PersistCertificate(path, legacy);
+                    return legacy;
+                }
+                catch
+                {
+                    // fall through to regenerate
+                }
             }
         }
 
         var cert = CreateSelfSignedCertificate();
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(path) ?? "");
-            File.WriteAllBytes(path, cert.Export(X509ContentType.Pfx));
-        }
-        catch
-        {
-            // ignore persistence failures; use ephemeral cert
-        }
+        PersistCertificate(path, cert);
         return cert;
     }
 
@@ -561,10 +664,28 @@ public sealed class ServerHost
         request.CertificateExtensions.Add(new X509KeyUsageExtension(
             X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, false));
         var cert = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
-        return new X509Certificate2(cert.Export(X509ContentType.Pfx));
+        return new X509Certificate2(
+            cert.Export(X509ContentType.Pfx, CertificatePassword),
+            CertificatePassword,
+            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.UserKeySet);
     }
 
-    private static string ResolveIncomingFolder()
+    private static void PersistCertificate(string path, X509Certificate2 cert)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path) ?? "");
+            var tempPath = path + ".tmp";
+            File.WriteAllBytes(tempPath, cert.Export(X509ContentType.Pfx, CertificatePassword));
+            File.Move(tempPath, path, true);
+        }
+        catch
+        {
+            // ignore persistence failures; use in-memory cert for current run
+        }
+    }
+
+    private static string ResolveDefaultIncomingFolder()
     {
         var folder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -585,6 +706,8 @@ public sealed class ServerHost
         public byte[] Key { get; }
         public DateTime ExpiresAt { get; }
     }
+
+    private sealed record PairFailureState(int Failures, DateTime BlockedUntil);
 
     private sealed class SessionBucket
     {

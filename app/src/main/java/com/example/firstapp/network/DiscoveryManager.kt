@@ -1,4 +1,4 @@
-package com.example.firstapp.network
+﻿package com.example.firstapp.network
 
 import android.content.Context
 import android.net.wifi.WifiManager
@@ -72,7 +72,7 @@ class DiscoveryManager(
                     platform = response.platform,
                     address = packet.address.hostAddress ?: packet.address.hostName ?: "",
                     tlsPort = response.tlsPort ?: 0,
-                    fingerprint = response.fingerprint,
+                    fingerprint = null,
                     lastSeen = System.currentTimeMillis()
                 )
                 Log.d("PulseSend", "Discovery advertise from ${device.name} @ ${device.address}:${device.tlsPort}")
@@ -105,3 +105,4 @@ class DiscoveryManager(
         }
     }
 }
+

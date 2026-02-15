@@ -86,7 +86,7 @@ public sealed class DiscoveryScanner : IDisposable
                         Platform = message.Platform,
                         Address = result.RemoteEndPoint.Address.ToString(),
                         TlsPort = message.TlsPort ?? 0,
-                        Fingerprint = message.Fingerprint,
+                        Fingerprint = null,
                         LastSeen = DateTime.Now
                     };
                     DeviceDiscovered?.Invoke(device);
@@ -111,4 +111,5 @@ public sealed class DiscoveryScanner : IDisposable
         _client?.Dispose();
     }
 }
+
 

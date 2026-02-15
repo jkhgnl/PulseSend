@@ -58,6 +58,22 @@
         "runtime": {
           "lib/net6.0/NSec.Cryptography.dll": {}
         }
+      },
+      "System.Security.Cryptography.ProtectedData/9.0.0": {
+        "type": "package",
+        "compile": {
+          "lib/net8.0/System.Security.Cryptography.ProtectedData.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net8.0/System.Security.Cryptography.ProtectedData.dll": {
+            "related": ".xml"
+          }
+        },
+        "build": {
+          "buildTransitive/net8.0/_._": {}
+        }
       }
     }
   },
@@ -100,11 +116,46 @@
         "nsec.cryptography.nuspec",
         "nsec.png"
       ]
+    },
+    "System.Security.Cryptography.ProtectedData/9.0.0": {
+      "sha512": "CJW+x/F6fmRQ7N6K8paasTw9PDZp4t7G76UjGNlSDgoHPF0h08vTzLYbLZpOLEJSg35d5wy2jCXGo84EN05DpQ==",
+      "type": "package",
+      "path": "system.security.cryptography.protecteddata/9.0.0",
+      "files": [
+        ".nupkg.metadata",
+        ".signature.p7s",
+        "Icon.png",
+        "LICENSE.TXT",
+        "PACKAGE.md",
+        "THIRD-PARTY-NOTICES.TXT",
+        "buildTransitive/net461/System.Security.Cryptography.ProtectedData.targets",
+        "buildTransitive/net462/_._",
+        "buildTransitive/net8.0/_._",
+        "buildTransitive/netcoreapp2.0/System.Security.Cryptography.ProtectedData.targets",
+        "lib/MonoAndroid10/_._",
+        "lib/MonoTouch10/_._",
+        "lib/net462/System.Security.Cryptography.ProtectedData.dll",
+        "lib/net462/System.Security.Cryptography.ProtectedData.xml",
+        "lib/net8.0/System.Security.Cryptography.ProtectedData.dll",
+        "lib/net8.0/System.Security.Cryptography.ProtectedData.xml",
+        "lib/net9.0/System.Security.Cryptography.ProtectedData.dll",
+        "lib/net9.0/System.Security.Cryptography.ProtectedData.xml",
+        "lib/netstandard2.0/System.Security.Cryptography.ProtectedData.dll",
+        "lib/netstandard2.0/System.Security.Cryptography.ProtectedData.xml",
+        "lib/xamarinios10/_._",
+        "lib/xamarinmac20/_._",
+        "lib/xamarintvos10/_._",
+        "lib/xamarinwatchos10/_._",
+        "system.security.cryptography.protecteddata.9.0.0.nupkg.sha512",
+        "system.security.cryptography.protecteddata.nuspec",
+        "useSharedDesignerContext.txt"
+      ]
     }
   },
   "projectFileDependencyGroups": {
     "net8.0": [
-      "NSec.Cryptography >= 24.4.0"
+      "NSec.Cryptography >= 24.4.0",
+      "System.Security.Cryptography.ProtectedData >= 9.0.0"
     ]
   },
   "packageFolders": {
@@ -159,6 +210,10 @@
           "NSec.Cryptography": {
             "target": "Package",
             "version": "[24.4.0, )"
+          },
+          "System.Security.Cryptography.ProtectedData": {
+            "target": "Package",
+            "version": "[9.0.0, )"
           }
         },
         "imports": [

@@ -4,11 +4,25 @@ namespace PulseSend.Windows.ViewModels;
 
 public sealed class MessageItemViewModel : ViewModelBase
 {
+    private const int PreviewLength = 120;
+
     private string _messageId = "";
     private string _deviceName = "";
     private string _content = "";
     private DateTime _receivedAt;
     private MessageDirection _direction;
+
+    public Action<string>? CopyRequested { get; set; }
+    public Action<string>? ViewFullRequested { get; set; }
+
+    public RelayCommand CopyCommand { get; }
+    public RelayCommand ViewFullCommand { get; }
+
+    public MessageItemViewModel()
+    {
+        CopyCommand = new RelayCommand(CopyContent, () => !string.IsNullOrWhiteSpace(Content));
+        ViewFullCommand = new RelayCommand(ViewFullContent, () => HasOverflow);
+    }
 
     public string MessageId
     {
@@ -31,7 +45,16 @@ public sealed class MessageItemViewModel : ViewModelBase
     public string Content
     {
         get => _content;
-        set => SetField(ref _content, value);
+        set
+        {
+            if (SetField(ref _content, value))
+            {
+                CopyCommand.NotifyCanExecuteChanged();
+                ViewFullCommand.NotifyCanExecuteChanged();
+                RaisePropertyChanged(nameof(PreviewContent));
+                RaisePropertyChanged(nameof(HasOverflow));
+            }
+        }
     }
 
     public DateTime ReceivedAt
@@ -42,6 +65,7 @@ public sealed class MessageItemViewModel : ViewModelBase
             if (SetField(ref _receivedAt, value))
             {
                 RaisePropertyChanged(nameof(Header));
+                RaisePropertyChanged(nameof(TimeText));
             }
         }
     }
@@ -54,18 +78,28 @@ public sealed class MessageItemViewModel : ViewModelBase
             if (SetField(ref _direction, value))
             {
                 RaisePropertyChanged(nameof(Header));
+                RaisePropertyChanged(nameof(IsIncoming));
+                RaisePropertyChanged(nameof(IsOutgoing));
+                RaisePropertyChanged(nameof(DirectionLabel));
             }
         }
     }
 
-    public string Header
-    {
-        get
-        {
-            var label = Direction == MessageDirection.Outgoing ? "发送" : "接收";
-            return $"{DeviceName} · {label} · {ReceivedAt:HH:mm}";
-        }
-    }
+    public bool IsIncoming => Direction == MessageDirection.Incoming;
+
+    public bool IsOutgoing => Direction == MessageDirection.Outgoing;
+
+    public bool HasOverflow => !string.IsNullOrWhiteSpace(Content) && Content.Length > PreviewLength;
+
+    public string PreviewContent => HasOverflow
+        ? $"{Content[..PreviewLength].TrimEnd()}..."
+        : Content;
+
+    public string DirectionLabel => IsOutgoing ? "发送至" : "收自";
+
+    public string TimeText => ReceivedAt.ToString("HH:mm");
+
+    public string Header => $"{DeviceName} | {DirectionLabel} | {TimeText}";
 
     public void UpdateFrom(MessageViewItem item)
     {
@@ -75,10 +109,20 @@ public sealed class MessageItemViewModel : ViewModelBase
         ReceivedAt = item.ReceivedAt;
         Direction = item.Direction;
     }
+
+    private void CopyContent()
+    {
+        if (!string.IsNullOrWhiteSpace(Content))
+        {
+            CopyRequested?.Invoke(Content);
+        }
+    }
+
+    private void ViewFullContent()
+    {
+        if (!string.IsNullOrWhiteSpace(Content))
+        {
+            ViewFullRequested?.Invoke(Content);
+        }
+    }
 }
-
-
-
-
-
-

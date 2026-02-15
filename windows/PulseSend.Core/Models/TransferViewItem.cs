@@ -8,6 +8,8 @@ public sealed record TransferViewItem
     public long ReceivedBytes { get; set; }
     public string StatusText { get; set; } = "";
     public TransferDirection Direction { get; init; } = TransferDirection.Incoming;
+    public string? SavedPath { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.Now;
 }
 
 

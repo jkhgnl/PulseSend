@@ -9,7 +9,10 @@ data class TransferItem(
     val sentBytes: Long = 0L,
     val speedBytesPerSec: Long = 0L,
     val status: TransferStatus = TransferStatus.Pending,
-    val direction: TransferDirection = TransferDirection.Upload
+    val direction: TransferDirection = TransferDirection.Upload,
+    val localPath: String? = null,
+    val localUri: String? = null,
+    val updatedAt: Long = System.currentTimeMillis()
 )
 
 enum class TransferStatus {

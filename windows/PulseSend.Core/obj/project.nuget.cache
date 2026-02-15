@@ -1,11 +1,12 @@
 {
   "version": 2,
-  "dgSpecHash": "pNSLDwmIuH4=",
+  "dgSpecHash": "C0BLqIH3Kes=",
   "success": true,
   "projectFilePath": "E:\\Programme\\Android\\FirstAPP2\\windows\\PulseSend.Core\\PulseSend.Core.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\Jkhgnl\\.nuget\\packages\\libsodium\\1.0.19\\libsodium.1.0.19.nupkg.sha512",
-    "C:\\Users\\Jkhgnl\\.nuget\\packages\\nsec.cryptography\\24.4.0\\nsec.cryptography.24.4.0.nupkg.sha512"
+    "C:\\Users\\Jkhgnl\\.nuget\\packages\\nsec.cryptography\\24.4.0\\nsec.cryptography.24.4.0.nupkg.sha512",
+    "C:\\Users\\Jkhgnl\\.nuget\\packages\\system.security.cryptography.protecteddata\\9.0.0\\system.security.cryptography.protecteddata.9.0.0.nupkg.sha512"
   ],
   "logs": []
 }

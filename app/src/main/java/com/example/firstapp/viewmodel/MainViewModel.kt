@@ -1,4 +1,4 @@
-package com.example.firstapp.viewmodel
+﻿package com.example.firstapp.viewmodel
 
 import android.content.Context
 import android.net.Uri
@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
 
 data class DeviceUi(
@@ -48,6 +49,7 @@ data class MainUiState(
     val transfers: List<TransferItem> = emptyList(),
     val isDiscovering: Boolean = true,
     val message: String? = null,
+    val alertMessage: String? = null,
     val textDraft: String = "",
     val serverSnapshot: ServerSnapshot = ServerSnapshot(),
     val messages: List<MessageItem> = emptyList()
@@ -66,10 +68,18 @@ class MainViewModel(private val appContext: Context) : ViewModel() {
     private val transfers = MutableStateFlow<List<TransferItem>>(emptyList())
     private val selectedDeviceId = MutableStateFlow<String?>(null)
     private val message = MutableStateFlow<String?>(null)
+    private val alertMessage = MutableStateFlow<String?>(null)
     private val textDraft = MutableStateFlow("")
     private val serverSnapshot = MutableStateFlow(ServerSnapshot())
     private val messages = MutableStateFlow<List<MessageItem>>(emptyList())
     private val heartbeatJobs = mutableMapOf<String, Job>()
+    private val heartbeatFailures = ConcurrentHashMap<String, Int>()
+
+    companion object {
+        private const val ONLINE_WINDOW_MS = 8_000L
+        private const val OFFLINE_GRACE_WINDOW_MS = 8_000L
+        private const val OFFLINE_FAILURE_THRESHOLD = 3
+    }
 
     private val deviceGroup = combine(
         discoveredDevices,
@@ -122,14 +132,15 @@ class MainViewModel(private val appContext: Context) : ViewModel() {
 
     val uiState: StateFlow<MainUiState> = combine(
         deviceGroup,
-        transferGroup
-    ) { (discovered, trusted, files), group ->
+        transferGroup,
+        alertMessage
+    ) { (discovered, trusted, files), group, alert ->
         val now = System.currentTimeMillis()
         val devices = discovered.values.map { device ->
             val trustedRecord = trusted[device.id]
             val outgoingToken = trustedRecord?.outgoingToken
             val incomingToken = trustedRecord?.incomingToken
-            val isOnline = device.lastSeen > 0 && now - device.lastSeen <= 3_000
+            val isOnline = device.lastSeen > 0 && now - device.lastSeen <= ONLINE_WINDOW_MS
             DeviceUi(
                 info = device.copy(fingerprint = trustedRecord?.fingerprint),
                 canSend = !outgoingToken.isNullOrBlank(),
@@ -144,6 +155,7 @@ class MainViewModel(private val appContext: Context) : ViewModel() {
             transfers = group.transferItems,
             isDiscovering = true,
             message = group.notice,
+            alertMessage = alert,
             textDraft = group.draft,
             serverSnapshot = group.snapshot,
             messages = group.messages
@@ -152,7 +164,6 @@ class MainViewModel(private val appContext: Context) : ViewModel() {
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            store.clearAll()
             serverHost.start()
         }
         viewModelScope.launch {
@@ -160,6 +171,7 @@ class MainViewModel(private val appContext: Context) : ViewModel() {
                 val updated = discoveredDevices.value.toMutableMap()
                 updated[device.id] = device
                 discoveredDevices.value = updated
+                heartbeatFailures[device.id] = 0
                 ensureHeartbeat(device.id)
             }
         }
@@ -191,16 +203,28 @@ class MainViewModel(private val appContext: Context) : ViewModel() {
             while (true) {
                 val current = discoveredDevices.value[deviceId]
                 if (current != null && current.address.isNotBlank()) {
-                    val ok = runCatching { secureTransport.ping(current) }.getOrDefault(false)
-                    val updated = if (ok) {
-                        current.copy(lastSeen = System.currentTimeMillis())
-                    } else {
-                        store.resetTokens(deviceId)
-                        current.copy(lastSeen = 0L)
+                    val trusted = runCatching { store.get(deviceId) }.getOrNull()
+                    val hasTrust = !trusted?.fingerprint.isNullOrBlank() &&
+                        !trusted?.outgoingToken.isNullOrBlank()
+                    if (hasTrust) {
+                        val ok = runCatching { secureTransport.ping(current) }.getOrDefault(false)
+                        if (ok) {
+                            heartbeatFailures[deviceId] = 0
+                            val map = discoveredDevices.value.toMutableMap()
+                            map[deviceId] = current.copy(lastSeen = System.currentTimeMillis())
+                            discoveredDevices.value = map
+                        } else {
+                            val failures = (heartbeatFailures[deviceId] ?: 0) + 1
+                            heartbeatFailures[deviceId] = failures
+                            val recentlySeen = current.lastSeen > 0L &&
+                                (System.currentTimeMillis() - current.lastSeen) <= OFFLINE_GRACE_WINDOW_MS
+                            if (!recentlySeen && failures >= OFFLINE_FAILURE_THRESHOLD) {
+                                val map = discoveredDevices.value.toMutableMap()
+                                map[deviceId] = current.copy(lastSeen = 0L)
+                                discoveredDevices.value = map
+                            }
+                        }
                     }
-                    val map = discoveredDevices.value.toMutableMap()
-                    map[deviceId] = updated
-                    discoveredDevices.value = map
                 }
                 delay(2_000)
             }
@@ -229,6 +253,21 @@ class MainViewModel(private val appContext: Context) : ViewModel() {
 
     fun clearTextDraft() {
         textDraft.value = ""
+    }
+
+    fun updateIncomingFolder(uri: Uri?) {
+        val ok = serverHost.setIncomingFolder(uri)
+        message.value = if (ok) {
+            "接收目录已更新"
+        } else {
+            "目录不可写，请重新选择"
+        }
+    }
+
+    fun getIncomingFolderLabel(): String = serverHost.getIncomingFolderLabel()
+
+    fun notifyMessage(value: String) {
+        message.value = value
     }
 
     fun pairDevice(device: DeviceInfo, code: String) {
@@ -272,6 +311,11 @@ class MainViewModel(private val appContext: Context) : ViewModel() {
                 message.value = "请先输入对方配对码以开启发送"
                 return@launch
             }
+            val reachable = ensureReachableForSend(device)
+            if (!reachable) {
+                alertMessage.value = "对方设备已下线，请等待其上线后再发送。"
+                return@launch
+            }
             val deviceWithFingerprint = device.copy(fingerprint = trusted.fingerprint)
             files.forEach { file ->
                 val transfer = TransferItem(
@@ -310,6 +354,11 @@ class MainViewModel(private val appContext: Context) : ViewModel() {
                 message.value = "请先输入对方配对码以开启发送"
                 return@launch
             }
+            val reachable = ensureReachableForSend(device)
+            if (!reachable) {
+                alertMessage.value = "对方设备已下线，请等待其上线后再发送。"
+                return@launch
+            }
             val deviceWithFingerprint = device.copy(fingerprint = trusted.fingerprint)
             transferClient.sendMessage(deviceWithFingerprint, text)
             addMessage(
@@ -327,6 +376,18 @@ class MainViewModel(private val appContext: Context) : ViewModel() {
     fun clearMessage() {
         message.value = null
     }
+
+    fun clearAlertMessage() {
+        alertMessage.value = null
+    }
+
+    private fun isDeviceOnline(device: DeviceInfo): Boolean {
+        if (device.lastSeen <= 0L) return false
+        return System.currentTimeMillis() - device.lastSeen <= ONLINE_WINDOW_MS
+    }
+
+    private fun ensureReachableForSend(device: DeviceInfo): Boolean =
+        isDeviceOnline(device)
 
     private fun startTransfer(deviceId: String, device: DeviceInfo, file: FileDescriptor, item: TransferItem) {
         val handler = CoroutineExceptionHandler { _, throwable ->
@@ -350,33 +411,47 @@ class MainViewModel(private val appContext: Context) : ViewModel() {
                         sentBytes = sent,
                         totalBytes = total,
                         speedBytesPerSec = speed,
-                        status = TransferStatus.Transferring
+                        status = TransferStatus.Transferring,
+                        updatedAt = System.currentTimeMillis()
                     )
                 }
             }
-            updateTransfer(item.id) { it.copy(status = TransferStatus.Completed, sentBytes = it.totalBytes) }
+            updateTransfer(item.id) {
+                it.copy(
+                    status = TransferStatus.Completed,
+                    sentBytes = it.totalBytes,
+                    updatedAt = System.currentTimeMillis()
+                )
+            }
         }
     }
 
     private fun handleSendFailure(deviceId: String, throwable: Throwable) {
         Log.e("PulseSend", "Send failed", throwable)
         val detail = throwable.message?.take(80)?.trim()
-        val reason = if (!detail.isNullOrEmpty()) {
-            detail
-        } else {
-            throwable::class.java.simpleName
-        }
+        val reason = normalizeSendError(detail, throwable)
         message.value = if (!reason.isNullOrBlank()) {
             "发送失败：$reason"
         } else {
             "发送失败"
         }
-        if (detail != null && (detail.contains("401") || detail.contains("未授权") || detail.contains("未配对") || detail.contains("not trusted", true))) {
-            viewModelScope.launch {
-                val record = store.get(deviceId) ?: return@launch
-                store.save(record.copy(outgoingToken = null))
+    }
+
+    private fun normalizeSendError(detail: String?, throwable: Throwable): String {
+        if (!detail.isNullOrEmpty()) {
+            val lower = detail.lowercase()
+            if (lower.contains("hostname") && lower.contains("not verified")) {
+                return "证书校验失败，请重新配对"
             }
+            if (lower.contains("certificate") && (lower.contains("pin") || lower.contains("sha256/"))) {
+                return "证书指纹不匹配，请重新配对"
+            }
+            if (detail.contains("401") || detail.contains("未授权") || detail.contains("未配对")) {
+                return "对方未授权当前设备，请重新配对"
+            }
+            return detail
         }
+        return throwable::class.java.simpleName
     }
 
     private fun updateTransfer(id: String, transform: (TransferItem) -> TransferItem) {
@@ -394,6 +469,10 @@ class MainViewModel(private val appContext: Context) : ViewModel() {
             current.add(0, item)
         }
         transfers.value = current
+    }
+
+    fun removeTransfer(transferId: String) {
+        transfers.value = transfers.value.filterNot { it.id == transferId }
     }
 
     private fun addMessage(item: MessageItem) {
@@ -416,3 +495,5 @@ class MainViewModelFactory(private val context: Context) : ViewModelProvider.Fac
         throw IllegalArgumentException("Unknown ViewModel class")
     }
 }
+
+

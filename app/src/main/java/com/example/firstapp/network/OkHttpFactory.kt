@@ -2,7 +2,11 @@ package com.example.firstapp.network
 
 import android.util.Log
 import com.example.firstapp.core.crypto.CryptoUtils
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import javax.net.ssl.HostnameVerifier
@@ -12,23 +16,47 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 object OkHttpFactory {
+    private val clientCache = ConcurrentHashMap<String, OkHttpClient>()
+    private val sharedPool = ConnectionPool(16, 5, TimeUnit.MINUTES)
+
     fun pairingClient(): OkHttpClient {
         val trustAll = trustAllManager()
         val sslSocketFactory = sslSocketFactory(trustAll)
         return OkHttpClient.Builder()
             .sslSocketFactory(sslSocketFactory, trustAll)
             .hostnameVerifier(HostnameVerifier { _, _ -> true })
+            .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
+            .connectionPool(sharedPool)
+            .retryOnConnectionFailure(true)
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
             .build()
     }
 
     fun pinnedClient(host: String, pin: String): OkHttpClient {
-        Log.d("PulseSend", "Creating TLS client for $host (pin verification disabled; saved pin=$pin)")
-        val trustAll = trustAllManager()
-        val sslSocketFactory = sslSocketFactory(trustAll)
-        return OkHttpClient.Builder()
-            .sslSocketFactory(sslSocketFactory, trustAll)
-            .hostnameVerifier(HostnameVerifier { _, _ -> true })
-            .build()
+        require(pin.isNotBlank()) { "Pinned client requires a non-empty pin for host $host" }
+        val cacheKey = "$host|$pin"
+        return clientCache.getOrPut(cacheKey) {
+            Log.d("PulseSend", "Creating TLS client for $host with pin verification")
+            val trustAll = trustAllManager()
+            val sslSocketFactory = sslSocketFactory(trustAll)
+            OkHttpClient.Builder()
+                .sslSocketFactory(sslSocketFactory, trustAll)
+                .hostnameVerifier(HostnameVerifier { _, session ->
+                    val cert = runCatching {
+                        session.peerCertificates.firstOrNull() as? X509Certificate
+                    }.getOrNull() ?: return@HostnameVerifier false
+                    certificatePin(cert) == pin
+                })
+                .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
+                .connectionPool(sharedPool)
+                .retryOnConnectionFailure(true)
+                .connectTimeout(8, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build()
+        }
     }
 
     fun certificatePin(cert: X509Certificate): String {

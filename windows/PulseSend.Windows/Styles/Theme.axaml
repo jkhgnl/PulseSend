@@ -169,7 +169,36 @@
 
   <Style Selector="Border.message">
     <Setter Property="Background" Value="#F4F6FB" />
+    <Setter Property="BorderBrush" Value="#D8E2F0" />
+    <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="12" />
+  </Style>
+
+  <Style Selector="Border.direction">
+    <Setter Property="CornerRadius" Value="999" />
+    <Setter Property="Padding" Value="8,3" />
+  </Style>
+
+  <Style Selector="Border.direction TextBlock">
+    <Setter Property="FontSize" Value="10" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="LetterSpacing" Value="0.8" />
+  </Style>
+
+  <Style Selector="Border.direction.incoming">
+    <Setter Property="Background" Value="#DFF5EA" />
+  </Style>
+
+  <Style Selector="Border.direction.incoming TextBlock">
+    <Setter Property="Foreground" Value="#0D7A53" />
+  </Style>
+
+  <Style Selector="Border.direction.outgoing">
+    <Setter Property="Background" Value="#FFE9DA" />
+  </Style>
+
+  <Style Selector="Border.direction.outgoing TextBlock">
+    <Setter Property="Foreground" Value="#B54708" />
   </Style>
 </Styles>
 

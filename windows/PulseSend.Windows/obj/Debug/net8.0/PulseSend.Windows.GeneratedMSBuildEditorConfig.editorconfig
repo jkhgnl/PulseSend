@@ -23,6 +23,9 @@ build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 [E:/Programme/Android/FirstAPP2/windows/PulseSend.Windows/Styles/Theme.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
+[E:/Programme/Android/FirstAPP2/windows/PulseSend.Windows/Views/FullTextDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
 [E:/Programme/Android/FirstAPP2/windows/PulseSend.Windows/Views/MainWindow.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 

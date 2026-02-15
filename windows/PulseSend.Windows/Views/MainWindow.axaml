@@ -13,6 +13,7 @@
         MinWidth="1100"
         MinHeight="680"
         WindowStartupLocation="CenterScreen"
+        DragDrop.AllowDrop="True"
         Background="Transparent">
   <Grid>
     <Border Background="{DynamicResource AppBackground}">
@@ -95,37 +96,60 @@
                 <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
                   <Button Command="{Binding PairSelectedCommand}" Content="配对" IsEnabled="{Binding HasSelectedDevice}"/>
                   <Button Command="{Binding SendFileCommand}" Content="发送文件" IsEnabled="{Binding HasSelectedDevice}"/>
-                  <Button Command="{Binding SendMessageCommand}" Content="发送文本" IsEnabled="{Binding HasSelectedDevice}"/>
                 </StackPanel>
 
-                <Border Grid.Row="3" Classes="note" Padding="10">
+                <Border Grid.Row="3" Classes="note" Padding="10" Margin="0,10,0,10" Height="220">
                   <StackPanel Spacing="6">
-                    <TextBlock Text="手动添加设备" Classes="label"/>
-                    <TextBox Text="{Binding ManualAddress}" Watermark="IP 地址"/>
-                    <TextBox Text="{Binding ManualPortText}" Watermark="端口 (默认 48084)"/>
-                    <Button Command="{Binding AddManualDeviceCommand}" Content="添加"/>
+                    <TextBlock Text="待上传队列（支持拖拽到窗口）" Classes="label"/>
+                    <ScrollViewer Height="160" VerticalScrollBarVisibility="Auto">
+                      <ItemsControl ItemsSource="{Binding PendingUploads}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:PendingUploadItemViewModel">
+                            <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,6">
+                              <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis"/>
+                              <TextBlock Grid.Column="1" Text="{Binding SizeText}" Classes="muted" Margin="8,0,8,0"/>
+                              <Button Grid.Column="2" Command="{Binding RemoveCommand}" Content="移除" MinWidth="52"/>
+                            </Grid>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </ScrollViewer>
+                    <TextBlock Text="将文件拖到此窗口即可加入队列" Classes="muted"/>
                   </StackPanel>
                 </Border>
+
               </Grid>
             </Border>
 
             <Border Grid.Column="1" Classes="card" Padding="16" Margin="0,0,20,0">
-              <Grid RowDefinitions="Auto,*">
-                <TextBlock Text="传输进度" Classes="section" Margin="0,0,0,12"/>
-                <ItemsControl ItemsSource="{Binding Transfers}">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:TransferItemViewModel">
-                      <Border Classes="card item" Padding="12" Margin="0,0,0,12">
-                        <StackPanel Spacing="6">
-                          <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
-                          <TextBlock Text="{Binding StatusText}" Classes="muted"/>
-                          <ProgressBar Value="{Binding Progress}" Height="8"/>
-                          <TextBlock Text="{Binding SizeText}" Classes="muted"/>
-                        </StackPanel>
-                      </Border>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
+              <Grid RowDefinitions="Auto,Auto,*">
+                <TextBlock Text="传输进度" Classes="section" Margin="0,0,0,8"/>
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
+                  <Button Command="{Binding PickIncomingFolderCommand}" Content="更改接收目录"/>
+                  <TextBlock Text="{Binding IncomingFolder}" Classes="muted" VerticalAlignment="Center"/>
+                </StackPanel>
+                <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                  <ItemsControl ItemsSource="{Binding Transfers}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:TransferItemViewModel">
+                        <Border Classes="card item" Padding="12" Margin="0,0,0,12">
+                          <StackPanel Spacing="6">
+                            <TextBlock Text="{Binding FileName}" FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding DirectionText}" Classes="muted"/>
+                            <TextBlock Text="{Binding TimeText}" Classes="muted"/>
+                            <TextBlock Text="{Binding StatusText}" Classes="muted"/>
+                            <ProgressBar Value="{Binding Progress}" Height="8"/>
+                            <TextBlock Text="{Binding SizeText}" Classes="muted"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                              <Button Command="{Binding DeleteCommand}" Content="🗑" IsEnabled="{Binding CanDelete}" Margin="0,0,8,0"/>
+                              <Button Command="{Binding OpenCommand}" Content="打开/预览" IsEnabled="{Binding CanOpen}"/>
+                            </StackPanel>
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
               </Grid>
             </Border>
 
@@ -136,10 +160,32 @@
                   <ItemsControl ItemsSource="{Binding Messages}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:MessageItemViewModel">
-                        <Border Classes="message" Padding="10" Margin="0,0,0,10">
-                          <StackPanel Spacing="4">
-                            <TextBlock Text="{Binding Header}" Classes="muted"/>
-                            <TextBlock Text="{Binding Content}" TextWrapping="Wrap"/>
+                        <Border Classes="message" Padding="12" Margin="0,0,0,10">
+                          <StackPanel Spacing="6">
+                            <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                              <Border Classes="direction incoming" IsVisible="{Binding IsIncoming}">
+                                <TextBlock Text="收自"/>
+                              </Border>
+                              <Border Classes="direction outgoing" IsVisible="{Binding IsOutgoing}">
+                                <TextBlock Text="发送至"/>
+                              </Border>
+                              <TextBlock Grid.Column="1" Margin="8,0,0,0" Text="{Binding DeviceName}" FontWeight="SemiBold"/>
+                              <TextBlock Grid.Column="2" Text="{Binding TimeText}" Classes="muted"/>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,Auto">
+                              <TextBlock Text="{Binding PreviewContent}" TextWrapping="Wrap" FontSize="14"/>
+                              <Button Grid.Column="1"
+                                      Command="{Binding ViewFullCommand}"
+                                      Content="..."
+                                      IsVisible="{Binding HasOverflow}"
+                                      VerticalAlignment="Top"
+                                      Margin="6,0,0,0"
+                                      MinWidth="34"
+                                      Padding="8,2"/>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                              <Button Command="{Binding CopyCommand}" Content="复制文本"/>
+                            </StackPanel>
                           </StackPanel>
                         </Border>
                       </DataTemplate>

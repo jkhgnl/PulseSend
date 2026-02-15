@@ -1,7 +1,9 @@
-package com.example.firstapp.network
+﻿package com.example.firstapp.network
 
 import android.content.Context
+import android.net.Uri
 import android.os.Environment
+import androidx.documentfile.provider.DocumentFile
 import com.example.firstapp.core.crypto.CryptoUtils
 import com.example.firstapp.core.crypto.E2eCrypto
 import com.example.firstapp.core.device.DeviceIdentity
@@ -39,6 +41,7 @@ import java.io.IOException
 import java.io.File
 import java.io.RandomAccessFile
 import java.net.InetAddress
+import java.net.URLConnection
 import java.security.SecureRandom
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -51,6 +54,15 @@ class ServerHost(
     private val store: TrustedDeviceStore,
     private val port: Int = 48084
 ) {
+    companion object {
+        private const val PREFS = "pulsesend_prefs"
+        private const val KEY_INCOMING_TREE_URI = "incoming_tree_uri"
+        private const val PAIR_MAX_FAILURES = 8
+        private const val PAIR_BLOCK_MS = 5 * 60 * 1000L
+        private const val MESSAGE_REPLAY_WINDOW_MS = 30 * 60 * 1000L
+        private const val MESSAGE_REPLAY_MAX_ENTRIES = 4096
+    }
+
     private val json = Json { ignoreUnknownKeys = true }
     private val random = SecureRandom()
     private val server = MockWebServer()
@@ -58,6 +70,8 @@ class ServerHost(
     private val sessions = ConcurrentHashMap<String, SessionContext>()
     private val transfersById = ConcurrentHashMap<String, TransferState>()
     private val transfersByHash = ConcurrentHashMap<String, TransferState>()
+    private val pairFailures = ConcurrentHashMap<String, PairFailureState>()
+    private val seenMessageIds = ConcurrentHashMap<String, Long>()
     private var discoveryResponder: DiscoveryResponder? = null
     private var certificates: HandshakeCertificates? = null
     private var fingerprint: String = ""
@@ -66,6 +80,11 @@ class ServerHost(
     private val certFile: File by lazy {
         File(context.filesDir, "pulse_server.pem")
     }
+    private val prefs by lazy {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    }
+    @Volatile
+    private var incomingTreeUri: Uri? = prefs.getString(KEY_INCOMING_TREE_URI, null)?.let { Uri.parse(it) }
 
     private val _snapshot = MutableStateFlow(ServerSnapshot(port = port))
     val snapshot: StateFlow<ServerSnapshot> = _snapshot
@@ -121,7 +140,7 @@ class ServerHost(
         discoveryResponder = DiscoveryResponder(context, identity, port, fingerprint)
         discoveryResponder?.start()
         updateSnapshot("运行中")
-        _events.tryEmit("本机服务已启动")
+        _events.tryEmit("本地服务已启动")
     }
 
     fun stop() {
@@ -136,16 +155,42 @@ class ServerHost(
         updateSnapshot(_snapshot.value.statusText)
     }
 
+    fun setIncomingFolder(treeUri: Uri?): Boolean {
+        if (treeUri == null) {
+            incomingTreeUri = null
+            prefs.edit().putString(KEY_INCOMING_TREE_URI, null).apply()
+            return true
+        }
+        val root = DocumentFile.fromTreeUri(context, treeUri) ?: return false
+        if (!root.canWrite()) {
+            return false
+        }
+        incomingTreeUri = treeUri
+        prefs.edit().putString(KEY_INCOMING_TREE_URI, treeUri.toString()).apply()
+        return true
+    }
+
+    fun getIncomingFolderLabel(): String {
+        val tree = incomingTreeUri
+        return if (tree != null) tree.toString() else resolveIncomingFolder().absolutePath
+    }
+
     private fun handlePair(request: RecordedRequest): MockResponse {
         val payload = request.body.readUtf8()
         val parsed = json.decodeFromString(PairRequest.serializer(), payload)
+        val peerKey = parsed.deviceId.ifBlank { "unknown-device" }
+        if (isPairBlocked(peerKey)) {
+            return MockResponse().setResponseCode(429)
+        }
         if (parsed.code != pairCode) {
+            recordPairFailure(peerKey)
             return MockResponse().setResponseCode(403)
         }
+        clearPairFailures(peerKey)
         val keyPair = E2eCrypto.generateKeyPair()
-        val peerKey = E2eCrypto.publicKeyFromBytes(CryptoUtils.fromBase64(parsed.publicKey))
+        val peerPublicKey = E2eCrypto.publicKeyFromBytes(CryptoUtils.fromBase64(parsed.publicKey))
         val salt = CryptoUtils.randomBytes(16)
-        val shared = E2eCrypto.deriveSharedSecret(keyPair.private, peerKey)
+        val shared = E2eCrypto.deriveSharedSecret(keyPair.private, peerPublicKey)
         CryptoUtils.hkdfSha256(shared, salt, infoBytes, 32)
 
         val token = CryptoUtils.toBase64(CryptoUtils.randomBytes(32))
@@ -269,6 +314,16 @@ class ServerHost(
         if (parsed.cipherText.isBlank() || parsed.nonce.isBlank() || parsed.aad.isBlank()) {
             return MockResponse().setResponseCode(400)
         }
+        if (parsed.messageId.isBlank()) {
+            return MockResponse().setResponseCode(400)
+        }
+        cleanupSeenMessages()
+        val now = System.currentTimeMillis()
+        val seenAt = seenMessageIds.putIfAbsent(parsed.messageId, now)
+        if (seenAt != null && now - seenAt <= MESSAGE_REPLAY_WINDOW_MS) {
+            val replayResponse = TextMessageResponse(received = true)
+            return jsonResponse(json.encodeToString(TextMessageResponse.serializer(), replayResponse))
+        }
         val nonce = CryptoUtils.fromBase64(parsed.nonce)
         val aad = CryptoUtils.fromBase64(parsed.aad)
         val cipher = CryptoUtils.fromBase64(parsed.cipherText)
@@ -302,6 +357,8 @@ class ServerHost(
     }
 
     private fun finalizeTransfer(state: TransferState) {
+        var copiedUri: Uri? = null
+        var localPath: String? = null
         synchronized(state.lock) {
             if (state.completed) return
             state.completed = true
@@ -311,12 +368,27 @@ class ServerHost(
                 state.finalFile.delete()
             }
             state.partFile.renameTo(state.finalFile)
+            copiedUri = copyToConfiguredFolder(state.finalFile)
+            localPath = if (copiedUri == null) state.finalFile.absolutePath else null
+            if (copiedUri != null) {
+                runCatching { state.finalFile.delete() }
+            }
         }
-        publishTransfer(state, TransferStatus.Completed)
-        _events.tryEmit("文件已保存：${state.finalFile.name}")
+        publishTransfer(
+            state = state,
+            status = TransferStatus.Completed,
+            localPath = localPath,
+            copiedUri = copiedUri?.toString()
+        )
+        _events.tryEmit("接收完成：${state.finalFile.name}")
     }
 
-    private fun publishTransfer(state: TransferState, status: TransferStatus) {
+    private fun publishTransfer(
+        state: TransferState,
+        status: TransferStatus,
+        localPath: String? = if (status == TransferStatus.Completed) state.finalFile.absolutePath else null,
+        copiedUri: String? = null
+    ) {
         val item = TransferItem(
             id = state.transferId,
             fileName = state.fileName,
@@ -324,9 +396,27 @@ class ServerHost(
             sentBytes = state.receivedBytes,
             speedBytesPerSec = 0L,
             status = status,
-            direction = TransferDirection.Download
+            direction = TransferDirection.Download,
+            localPath = localPath,
+            localUri = copiedUri,
+            updatedAt = System.currentTimeMillis()
         )
         _transferUpdates.tryEmit(item)
+    }
+
+    private fun copyToConfiguredFolder(source: File): Uri? {
+        val tree = incomingTreeUri ?: return null
+        return runCatching {
+            val root = DocumentFile.fromTreeUri(context, tree) ?: return null
+            val mime = URLConnection.guessContentTypeFromName(source.name) ?: "application/octet-stream"
+            val target = root.createFile(mime, source.name) ?: return null
+            context.contentResolver.openOutputStream(target.uri, "w")?.use { output ->
+                source.inputStream().use { input ->
+                    input.copyTo(output)
+                }
+            } ?: return null
+            target.uri
+        }.getOrNull()
     }
 
     private fun updateSnapshot(status: String) {
@@ -344,7 +434,7 @@ class ServerHost(
             .setBody(body)
 
     private fun generatePairCode(): String =
-        random.nextInt(1_000_000).toString().padStart(6, '0')
+        random.nextInt(100_000_000).toString().padStart(8, '0')
 
     private fun resolveIncomingFolder(): File {
         val base = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
@@ -384,6 +474,43 @@ class ServerHost(
     }
 
     private data class SessionContext(val key: ByteArray, val expiresAt: Long)
+
+    private data class PairFailureState(
+        val failures: Int,
+        val blockedUntil: Long
+    )
+
+    private fun isPairBlocked(peer: String): Boolean {
+        val state = pairFailures[peer] ?: return false
+        return state.blockedUntil > System.currentTimeMillis()
+    }
+
+    private fun recordPairFailure(peer: String) {
+        val now = System.currentTimeMillis()
+        pairFailures.compute(peer) { _, previous ->
+            val failures = (previous?.failures ?: 0) + 1
+            val blockedUntil = if (failures >= PAIR_MAX_FAILURES) now + PAIR_BLOCK_MS else 0L
+            PairFailureState(failures = failures, blockedUntil = blockedUntil)
+        }
+    }
+
+    private fun clearPairFailures(peer: String) {
+        pairFailures.remove(peer)
+    }
+
+    private fun cleanupSeenMessages() {
+        val now = System.currentTimeMillis()
+        seenMessageIds.entries.removeIf { (_, seenAt) -> now - seenAt > MESSAGE_REPLAY_WINDOW_MS }
+        if (seenMessageIds.size > MESSAGE_REPLAY_MAX_ENTRIES) {
+            val overflow = seenMessageIds.size - MESSAGE_REPLAY_MAX_ENTRIES
+            if (overflow > 0) {
+                seenMessageIds.entries
+                    .sortedBy { it.value }
+                    .take(overflow)
+                    .forEach { seenMessageIds.remove(it.key) }
+            }
+        }
+    }
 
     private class TransferState(
         val transferId: String,

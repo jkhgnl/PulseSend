@@ -1,11 +1,14 @@
 ﻿using System.Collections.ObjectModel;
 using System;
 using Avalonia.Threading;
+using System.Diagnostics;
+using System.IO;
 using PulseSend.Core.Discovery;
 using PulseSend.Core.Models;
 using PulseSend.Core.Network;
 using PulseSend.Core.Services;
 using PulseSend.Core.Storage;
+using System.Collections.Concurrent;
 
 namespace PulseSend.Windows.ViewModels;
 
@@ -21,8 +24,12 @@ public sealed class MainViewModel : ViewModelBase
     private readonly Dictionary<string, DeviceViewModel> _deviceIndex = new();
     private readonly Dictionary<string, TransferItemViewModel> _transferIndex = new();
     private readonly Dictionary<string, MessageItemViewModel> _messageIndex = new();
+    private readonly HashSet<string> _pendingUploadPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, CancellationTokenSource> _heartbeats = new();
+    private readonly ConcurrentDictionary<string, int> _heartbeatFailures = new();
     private readonly DispatcherTimer _onlineTimer;
+    private static readonly TimeSpan OfflineGraceWindow = TimeSpan.FromSeconds(8);
+    private const int OfflineFailureThreshold = 3;
 
     private string _pairCode = "------";
     private string _statusText = "启动中";
@@ -32,18 +39,25 @@ public sealed class MainViewModel : ViewModelBase
     private string _messageDraft = "";
     private string _manualAddress = "";
     private string _manualPortText = "48084";
+    private string _incomingFolder = "";
     private DeviceViewModel? _selectedDevice;
 
     public ObservableCollection<DeviceViewModel> Devices { get; } = new();
     public ObservableCollection<TransferItemViewModel> Transfers { get; } = new();
     public ObservableCollection<MessageItemViewModel> Messages { get; } = new();
+    public ObservableCollection<PendingUploadItemViewModel> PendingUploads { get; } = new();
 
     public Func<Task<string?>>? PairCodePrompt { get; set; }
     public Func<Task<string?>>? FilePicker { get; set; }
+    public Func<Task<string?>>? FolderPicker { get; set; }
+    public Func<string, Task>? CopyTextRequested { get; set; }
+    public Func<string, Task>? FullTextRequested { get; set; }
 
     public RelayCommand RegenerateCodeCommand { get; }
+    public AsyncCommand PickIncomingFolderCommand { get; }
     public AsyncCommand PairSelectedCommand { get; }
     public AsyncCommand SendFileCommand { get; }
+    public AsyncCommand SendQueuedFilesCommand { get; }
     public AsyncCommand SendMessageCommand { get; }
     public RelayCommand AddManualDeviceCommand { get; }
 
@@ -62,8 +76,10 @@ public sealed class MainViewModel : ViewModelBase
         _discovery.DeviceDiscovered += OnDeviceDiscovered;
 
         RegenerateCodeCommand = new RelayCommand(() => _server.RegeneratePairCode());
+        PickIncomingFolderCommand = new AsyncCommand(PickIncomingFolderAsync);
         PairSelectedCommand = new AsyncCommand(PairSelectedAsync, () => HasSelectedDevice);
         SendFileCommand = new AsyncCommand(SendFileAsync, () => HasSelectedDevice);
+        SendQueuedFilesCommand = new AsyncCommand(SendQueuedFilesAsync, () => HasSelectedDevice && HasPendingUploads);
         SendMessageCommand = new AsyncCommand(SendMessageAsync, () => HasSelectedDevice && !string.IsNullOrWhiteSpace(MessageDraft));
         AddManualDeviceCommand = new RelayCommand(AddManualDevice, () => !string.IsNullOrWhiteSpace(ManualAddress));
 
@@ -79,6 +95,7 @@ public sealed class MainViewModel : ViewModelBase
                 AlertMessageRequested?.Invoke(message);
             });
         };
+        _incomingFolder = _server.IncomingFolder;
 
         RefreshTrustedDevices();
         _onlineTimer = new DispatcherTimer
@@ -151,6 +168,12 @@ public sealed class MainViewModel : ViewModelBase
         set => SetField(ref _manualPortText, value);
     }
 
+    public string IncomingFolder
+    {
+        get => _incomingFolder;
+        private set => SetField(ref _incomingFolder, value);
+    }
+
     public DeviceViewModel? SelectedDevice
     {
         get => _selectedDevice;
@@ -161,15 +184,60 @@ public sealed class MainViewModel : ViewModelBase
                 RaisePropertyChanged(nameof(HasSelectedDevice));
                 PairSelectedCommand.NotifyCanExecuteChanged();
                 SendFileCommand.NotifyCanExecuteChanged();
+                SendQueuedFilesCommand.NotifyCanExecuteChanged();
                 SendMessageCommand.NotifyCanExecuteChanged();
             }
         }
     }
 
     public bool HasSelectedDevice => SelectedDevice != null;
+    public bool HasPendingUploads => PendingUploads.Count > 0;
+
+    public void EnqueueFiles(IEnumerable<string> filePaths)
+    {
+        var added = 0;
+        foreach (var path in filePaths)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+            var fullPath = Path.GetFullPath(path);
+            if (!File.Exists(fullPath) || !_pendingUploadPaths.Add(fullPath))
+            {
+                continue;
+            }
+            PendingUploads.Add(new PendingUploadItemViewModel(fullPath, RemovePendingUpload));
+            added++;
+        }
+        if (added > 0)
+        {
+            RaisePropertyChanged(nameof(HasPendingUploads));
+            SendFileCommand.NotifyCanExecuteChanged();
+            SendQueuedFilesCommand.NotifyCanExecuteChanged();
+            Notice = $"已加入待上传队列：{added} 个文件";
+        }
+    }
+
+    private void RemovePendingUpload(PendingUploadItemViewModel item)
+    {
+        if (item == null)
+        {
+            return;
+        }
+        if (PendingUploads.Remove(item))
+        {
+            _pendingUploadPaths.Remove(item.FilePath);
+            RaisePropertyChanged(nameof(HasPendingUploads));
+            SendFileCommand.NotifyCanExecuteChanged();
+            SendQueuedFilesCommand.NotifyCanExecuteChanged();
+            Notice = $"已从队列移除：{item.FileName}";
+        }
+    }
 
     private void OnDeviceDiscovered(DeviceInfo info)
     {
+        _heartbeatFailures[info.Id] = 0;
         Dispatcher.UIThread.Post(() => UpsertDevice(info));
         EnsureHeartbeat(info.Id);
     }
@@ -235,11 +303,17 @@ public sealed class MainViewModel : ViewModelBase
                             var ok = await _transport.PingAsync(info);
                             if (ok)
                             {
+                                _heartbeatFailures[deviceId] = 0;
                                 Dispatcher.UIThread.Post(viewModel.Touch);
                             }
                             else
                             {
-                                Dispatcher.UIThread.Post(() => HandleOffline(viewModel));
+                                var failures = _heartbeatFailures.AddOrUpdate(deviceId, 1, (_, prev) => prev + 1);
+                                var recentlySeen = DateTime.Now - viewModel.LastSeen <= OfflineGraceWindow;
+                                if (!recentlySeen && failures >= OfflineFailureThreshold)
+                                {
+                                    Dispatcher.UIThread.Post(() => HandleOffline(viewModel));
+                                }
                             }
                         }
                     }
@@ -293,9 +367,11 @@ public sealed class MainViewModel : ViewModelBase
 
     private void HandleOffline(DeviceViewModel device)
     {
+        if (!string.IsNullOrWhiteSpace(device.Id))
+        {
+            _heartbeatFailures[device.Id] = OfflineFailureThreshold;
+        }
         device.MarkOffline();
-        _registry.ResetTokens(device.Id);
-        device.ClearPairState();
     }
 
     private void UpsertTransfer(TransferViewItem item)
@@ -307,6 +383,8 @@ public sealed class MainViewModel : ViewModelBase
         }
         var viewModel = new TransferItemViewModel();
         viewModel.UpdateFrom(item);
+        viewModel.OpenRequested = OpenFile;
+        viewModel.DeleteRequested = DeleteTransferFile;
         _transferIndex[item.TransferId] = viewModel;
         Transfers.Add(viewModel);
     }
@@ -320,6 +398,24 @@ public sealed class MainViewModel : ViewModelBase
         }
         var viewModel = new MessageItemViewModel();
         viewModel.UpdateFrom(item);
+        viewModel.CopyRequested = text =>
+        {
+            var copyAction = CopyTextRequested;
+            if (copyAction == null)
+            {
+                return;
+            }
+            _ = copyAction(text);
+        };
+        viewModel.ViewFullRequested = text =>
+        {
+            var fullTextAction = FullTextRequested;
+            if (fullTextAction == null)
+            {
+                return;
+            }
+            _ = fullTextAction(text);
+        };
         _messageIndex[item.MessageId] = viewModel;
         Messages.Insert(0, viewModel);
         if (Messages.Count > 50)
@@ -350,6 +446,11 @@ public sealed class MainViewModel : ViewModelBase
             await _transport.PairAsync(info, _identity, code.Trim());
             Notice = "配对成功。";
             RefreshTrustedDevices();
+            if (SelectedDevice != null)
+            {
+                var refreshed = _registry.FindById(SelectedDevice.Id);
+                SelectedDevice.Update(SelectedDevice.ToDeviceInfo(), refreshed);
+            }
         }
         catch (Exception ex)
         {
@@ -363,6 +464,15 @@ public sealed class MainViewModel : ViewModelBase
         {
             return;
         }
+        if (!await EnsureSelectedDeviceOnlineForSendingAsync())
+        {
+            return;
+        }
+        if (PendingUploads.Count > 0)
+        {
+            await SendQueuedFilesAsync();
+            return;
+        }
         if (FilePicker == null)
         {
             Notice = "无法打开文件选择器。";
@@ -372,6 +482,50 @@ public sealed class MainViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(filePath))
         {
             return;
+        }
+        await SendFilePathAsync(filePath);
+    }
+
+    private async Task SendQueuedFilesAsync()
+    {
+        if (SelectedDevice == null)
+        {
+            return;
+        }
+        if (!await EnsureSelectedDeviceOnlineForSendingAsync())
+        {
+            return;
+        }
+        if (PendingUploads.Count == 0)
+        {
+            Notice = "待上传队列为空";
+            return;
+        }
+        var queued = PendingUploads.ToList();
+        foreach (var item in queued)
+        {
+            var sent = await SendFilePathAsync(item.FilePath);
+            if (!sent)
+            {
+                break;
+            }
+            _pendingUploadPaths.Remove(item.FilePath);
+            PendingUploads.Remove(item);
+        }
+        RaisePropertyChanged(nameof(HasPendingUploads));
+        SendFileCommand.NotifyCanExecuteChanged();
+        SendQueuedFilesCommand.NotifyCanExecuteChanged();
+        if (PendingUploads.Count == 0)
+        {
+            Notice = "待上传队列已发送完成";
+        }
+    }
+
+    private async Task<bool> SendFilePathAsync(string filePath)
+    {
+        if (SelectedDevice == null)
+        {
+            return false;
         }
         try
         {
@@ -387,12 +541,15 @@ public sealed class MainViewModel : ViewModelBase
                         TotalBytes = progress.TotalBytes,
                         ReceivedBytes = progress.SentBytes,
                         StatusText = progress.StatusText,
-                        Direction = TransferDirection.Outgoing
+                        Direction = TransferDirection.Outgoing,
+                        SavedPath = filePath,
+                        UpdatedAt = DateTime.Now
                     };
                     UpsertTransfer(item);
                 });
             });
             Notice = "文件发送完成。";
+            return true;
         }
         catch (Exception ex)
         {
@@ -402,18 +559,27 @@ public sealed class MainViewModel : ViewModelBase
                 {
                     HandleOffline(SelectedDevice);
                 }
-                Notice = "发送失败：目标计算机积极拒绝，无法连接（已标记离线）。";
+                Notice = "发送失败：目标计算机拒绝连接（已标记离线）。";
+            }
+            else if (IsUnauthorized(ex))
+            {
+                HandlePairingDesync(SelectedDevice);
+                Notice = "发送失败：对方未授权当前设备，请重新配对。";
             }
             else
             {
                 Notice = $"发送失败：{ex.Message}";
             }
+            return false;
         }
     }
-
     private async Task SendMessageAsync()
     {
         if (SelectedDevice == null)
+        {
+            return;
+        }
+        if (!await EnsureSelectedDeviceOnlineForSendingAsync())
         {
             return;
         }
@@ -446,13 +612,35 @@ public sealed class MainViewModel : ViewModelBase
                 {
                     HandleOffline(SelectedDevice);
                 }
-                Notice = "消息发送失败：目标计算机积极拒绝，无法连接（已标记离线）。";
+                Notice = "消息发送失败：目标计算机拒绝连接（已标记离线）。";
+            }
+            else if (IsUnauthorized(ex))
+            {
+                HandlePairingDesync(SelectedDevice);
+                Notice = "消息发送失败：对方未授权当前设备，请重新配对。";
             }
             else
             {
                 Notice = $"消息发送失败：{ex.Message}";
             }
         }
+    }
+
+    private async Task PickIncomingFolderAsync()
+    {
+        if (FolderPicker == null)
+        {
+            Notice = "无法打开文件夹选择器。";
+            return;
+        }
+        var folder = await FolderPicker();
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            return;
+        }
+        _server.SetIncomingFolder(folder);
+        IncomingFolder = _server.IncomingFolder;
+        Notice = $"已切换接收目录：{IncomingFolder}";
     }
 
     private void AddManualDevice()
@@ -485,10 +673,97 @@ public sealed class MainViewModel : ViewModelBase
     {
         var message = ex.Message ?? string.Empty;
         return message.Contains("actively refused", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("积极拒绝", StringComparison.OrdinalIgnoreCase)
             || message.Contains("No connection could be made", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsUnauthorized(Exception ex)
+    {
+        var message = ex.Message ?? string.Empty;
+        return message.Contains("401", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("unauthorized", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("未授权", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("未配对", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("not paired", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void HandlePairingDesync(DeviceViewModel? device)
+    {
+        if (device == null || string.IsNullOrWhiteSpace(device.Id))
+        {
+            return;
+        }
+        _registry.ResetTokens(device.Id);
+        RefreshTrustedDevices();
+    }
+
+    private void OpenFile(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            Notice = "文件不存在或已被移动。";
+            return;
+        }
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            Notice = $"无法打开文件：{ex.Message}";
+        }
+    }
+
+    private Task<bool> EnsureSelectedDeviceOnlineForSendingAsync()
+    {
+        if (SelectedDevice == null)
+        {
+            return Task.FromResult(false);
+        }
+        if (SelectedDevice.IsOnline)
+        {
+            return Task.FromResult(true);
+        }
+        var text = "对方设备已下线，请等待其上线后再发送。";
+        Notice = text;
+        AlertMessageRequested?.Invoke(text);
+        return Task.FromResult(false);
+    }
+
+    private void DeleteTransferFile(TransferItemViewModel item)
+    {
+        if (item == null || string.IsNullOrWhiteSpace(item.SavedPath))
+        {
+            return;
+        }
+        var path = item.SavedPath;
+        try
+        {
+            if (!File.Exists(path))
+            {
+                Notice = "删除失败：文件不存在";
+                return;
+            }
+            File.Delete(path);
+            Transfers.Remove(item);
+            if (!string.IsNullOrWhiteSpace(item.TransferId))
+            {
+                _transferIndex.Remove(item.TransferId);
+            }
+            Notice = $"已删除：{item.FileName}";
+        }
+        catch (Exception ex)
+        {
+            Notice = $"删除失败：{ex.Message}";
+        }
+    }
 }
+
+
+
 
 
 
